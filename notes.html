@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Todas mis notas</title>
+  <script src="theme.js"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="page">
+  <header>
+    <h1>Todas mis notas</h1>
+    <span class="row">
+      <button class="ghost" id="exportBtn">Exportar JSON</button>
+      <button class="ghost" id="importBtn">Importar JSON</button>
+      <button class="ghost" id="optionsBtn">Categorías y atajo</button>
+      <input type="file" id="importFile" accept="application/json,.json" hidden>
+    </span>
+  </header>
+  <div id="msg"></div>
+
+  <div class="row grow">
+    <input id="search" placeholder="Buscar por título, descripción, URL o etiqueta…">
+    <select id="fColor"></select>
+    <select id="fTag"></select>
+    <select id="fScope">
+      <option value="">Página y sitio</option>
+      <option value="page">Solo de página</option>
+      <option value="domain">Solo de sitio</option>
+    </select>
+  </div>
+  <div id="count" class="muted" style="margin-top:8px"></div>
+  <section id="list"></section>
+
+  <dialog id="dlg">
+    <h2>Editar nota</h2>
+    <input id="eTitle" maxlength="150">
+    <textarea id="eDesc" maxlength="2000"></textarea>
+    <input id="eTags" placeholder="Etiquetas separadas por coma">
+    <div class="muted">Categoría (color)</div>
+    <div id="eSwatches" class="swatches"></div>
+    <select id="eScope">
+      <option value="page">Solo esta página (URL exacta)</option>
+      <option value="domain">Todo el sitio (dominio)</option>
+    </select>
+    <div class="row">
+      <button class="primary" id="eSave">Guardar</button>
+      <button class="ghost" id="eCancel">Cancelar</button>
+    </div>
+    <div id="eError" class="error"></div>
+  </dialog>
+
+  <script src="storage.js"></script>
+  <script src="ui.js"></script>
+  <script src="notes.js"></script>
+</body>
+</html>

@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Notas por URL — Ajustes</title>
+  <script src="theme.js"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="page">
+  <h1>Ajustes</h1>
+
+  <h2 style="margin-top:20px">Apariencia</h2>
+  <div class="field" style="max-width:26rem">
+    <label for="theme">Tema</label>
+    <select id="theme">
+      <option value="claude-light">Claro cálido</option>
+      <option value="claude-dark">Oscuro cálido</option>
+      <option value="dark">Oscuro</option>
+    </select>
+  </div>
+
+  <h2 style="margin-top:32px">Categorías (colores)</h2>
+  <p class="muted">Cada color funciona como una categoría: ponle un nombre y una descripción de para qué lo usas. La descripción aparece al pasar el cursor sobre la nota y en la vista detallada. Si eliminas una categoría, las notas que la usaban quedan sin color.</p>
+  <div id="palette"></div>
+  <div class="row">
+    <button class="ghost" id="addBtn">+ Agregar categoría</button>
+    <button class="primary" id="saveBtn">Guardar categorías</button>
+  </div>
+  <div id="msg"></div>
+
+  <h2 style="margin-top:32px">Atajo de teclado</h2>
+  <p>Atajo actual para abrir el popup: <kbd id="shortcut">…</kbd></p>
+  <button class="ghost" id="shortcutBtn">Cambiar atajo</button>
+  <p class="muted">El navegador administra los atajos de las extensiones; el botón abre esa página para que lo cambies.</p>
+
+  <script src="storage.js"></script>
+  <script src="ui.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

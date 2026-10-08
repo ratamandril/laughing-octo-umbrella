@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <script src="theme.js"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="popup">
+  <header class="p-head">
+    <strong>Notas por URL</strong>
+    <span class="row">
+      <button id="openAll" class="link">Ver todas →</button>
+      <button id="gear" class="icon-btn" title="Ajustes de vista" aria-label="Ajustes de vista">⚙</button>
+    </span>
+  </header>
+  <div id="pageInfo" class="p-info muted"></div>
+
+  <div id="filters" class="p-filters" hidden>
+    <select id="fColor" class="mini"></select>
+    <select id="fTag" class="mini"></select>
+  </div>
+
+  <!-- Única zona con barra de desplazamiento -->
+  <main id="listWrap" class="p-list">
+    <h2 id="relatedTitle" hidden></h2>
+    <section id="related"></section>
+    <p id="empty" class="muted" hidden>Aún no hay notas para esta página.</p>
+  </main>
+
+  <!-- Zona fija -->
+  <form id="form" class="p-form">
+    <div class="form-top">
+      <h2 id="formTitle">Nueva nota</h2>
+      <button type="button" id="toggleForm" class="icon-btn" title="Plegar o desplegar" aria-label="Plegar o desplegar el formulario">▾</button>
+    </div>
+    <div class="form-body">
+      <input id="title" placeholder="Título (por defecto: título de la pestaña)" maxlength="150">
+      <textarea id="description" placeholder="Descripción (Ctrl+Enter para guardar)" maxlength="2000"></textarea>
+      <input id="tags" placeholder="Etiquetas separadas por coma">
+      <div class="form-mid">
+        <div id="swatches" class="swatches" title="Categoría (color)"></div>
+        <select id="scope" title="Alcance de la nota">
+          <option value="page">Esta página</option>
+          <option value="domain">Todo el sitio</option>
+        </select>
+      </div>
+      <div class="form-actions">
+        <button class="primary" type="submit">Guardar</button>
+        <button class="ghost" type="button" id="cancelBtn" hidden>Cancelar</button>
+        <span id="error" class="error" style="margin:0"></span>
+      </div>
+    </div>
+  </form>
+
+  <!-- Engranaje: ajustes de vista -->
+  <section id="settings" class="settings" hidden>
+    <header style="margin-bottom:.8rem">
+      <h2 style="margin:0">Ajustes de vista</h2>
+      <button id="closeSettings" class="ghost" type="button">Cerrar</button>
+    </header>
+
+    <div class="field">
+      <label for="sTheme">Tema</label>
+      <select id="sTheme">
+        <option value="claude-light">Claro cálido</option>
+        <option value="claude-dark">Oscuro cálido</option>
+        <option value="dark">Oscuro</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="sView">Vista de las notas</label>
+      <select id="sView">
+        <option value="simple">Simple (solo título; clic para ampliar)</option>
+        <option value="normal">Normal</option>
+        <option value="detailed">Detallada</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="sFont">Tamaño de letra</label>
+      <span class="range-wrap">
+        <input id="sFont" type="range" min="10" max="18" step="1">
+        <output id="sFontOut"></output>
+      </span>
+    </div>
+    <div class="field">
+      <label for="sSize">Tamaño del popup</label>
+      <select id="sSize">
+        <option value="compact">Compacto (340 × 460)</option>
+        <option value="normal">Normal (400 × 540)</option>
+        <option value="large">Grande (520 × 600)</option>
+      </select>
+    </div>
+    <div class="field check">
+      <input id="sRemTags" type="checkbox">
+      <label for="sRemTags">Recordar las etiquetas de la última nota creada</label>
+    </div>
+    <div class="field check">
+      <input id="sRemColor" type="checkbox">
+      <label for="sRemColor">Recordar el color de la última nota creada</label>
+    </div>
+    <button id="optBtn" class="ghost" type="button">Categorías y atajo de teclado…</button>
+    <p class="muted">En la vista Simple, un clic sobre una nota la amplía (normal → detallada → simple). Si no caben las notas: baja el tamaño de letra, usa la vista Simple o pliega “Nueva nota” con la flecha.</p>
+  </section>
+
+  <script src="storage.js"></script>
+  <script src="ui.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

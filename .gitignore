@@ -1,0 +1,12 @@
+# Claves privadas (ver "Sincronizar entre equipos" en el README)
+*.pem
+
+# Paquetes y dependencias
+*.zip
+node_modules/
+
+# Sistema y editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
