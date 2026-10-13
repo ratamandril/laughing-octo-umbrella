@@ -4,6 +4,8 @@ Extensión para **Edge y Chrome** que funciona como los favoritos de la barra de
 
 Sin dependencias ni paso de compilación: son archivos HTML, CSS y JavaScript con Manifest V3.
 
+> Nuevo: la carpeta `app/` es un servidor local para compartir notas entre perfiles y navegadores (en desarrollo, ver `app/README.md`). La extensión sigue funcionando sola hasta que se integre.
+
 ## Qué hace
 
 - **Notas ligadas a una URL** exacta o a **todo el dominio**, a elección al crear la nota.
@@ -23,7 +25,7 @@ Sin dependencias ni paso de compilación: son archivos HTML, CSS y JavaScript co
 1. Descarga o clona este repositorio.
 2. Abre `edge://extensions` (Edge) o `chrome://extensions` (Chrome).
 3. Activa **Modo de desarrollador**.
-4. Pulsa **Cargar descomprimida** y elige la carpeta del repositorio (la que contiene `manifest.json`).
+4. Pulsa **Cargar descomprimida** y elige la carpeta `extension/` (la que contiene `manifest.json`).
 5. Tras cambiar el código, pulsa "Recargar" en la tarjeta de la extensión.
 
 ## Sincronización

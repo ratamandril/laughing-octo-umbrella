@@ -1,0 +1,22 @@
+{
+  "name": "notas-por-url-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "App local de Notas por URL: servidor para las extensiones de Edge y Chrome, con respaldo en Firestore (fase 2).",
+  "main": "src/main/main.js",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "serve": "node src/core/cli.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "electron": "^44.7.0"
+  }
+}

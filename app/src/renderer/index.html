@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Notas por URL</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <h1>Notas por URL</h1>
+    <span id="status" class="pill">Iniciando…</span>
+  </header>
+
+  <section class="card">
+    <h2>Emparejar una extensión</h2>
+    <p class="muted">En la extensión, abre <b>Ajustes → Conectar con la app</b> y escribe este código. Caduca a los 5 minutos y sirve una sola vez.</p>
+    <div class="pair-row">
+      <button id="newCode" class="primary">Generar código</button>
+      <button id="cancelCode" class="ghost" hidden>Cancelar</button>
+    </div>
+    <div id="codeBox" class="code-box" hidden>
+      <div id="code" class="code" aria-live="polite"></div>
+      <div id="countdown" class="muted"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Extensiones emparejadas</h2>
+    <div id="instances" class="list"></div>
+    <p id="noInstances" class="muted" hidden>Todavía no hay ninguna. Genera un código y empareja la primera.</p>
+  </section>
+
+  <section class="card">
+    <h2>Perfiles detectados en este equipo</h2>
+    <div id="profiles" class="list"></div>
+    <p id="noProfiles" class="muted" hidden>No se encontraron perfiles de Chrome ni de Edge.</p>
+  </section>
+
+  <footer class="foot">
+    <span id="summary" class="muted"></span>
+    <button id="openData" class="link">Abrir carpeta de datos</button>
+  </footer>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
