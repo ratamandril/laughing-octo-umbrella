@@ -44,4 +44,5 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .dot.on { background: var(--ok); }
 .tag { font-size: .8rem; border: 1px solid var(--line); border-radius: 99px; padding: .05rem .6rem; color: var(--muted); }
 .tag.ok { color: var(--ok); border-color: var(--ok); }
+.err { color: var(--danger); }
 .foot { display: flex; justify-content: space-between; align-items: center; margin-top: .4rem; }

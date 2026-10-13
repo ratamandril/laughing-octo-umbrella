@@ -38,6 +38,17 @@
     <p id="noProfiles" class="muted" hidden>No se encontraron perfiles de Chrome ni de Edge.</p>
   </section>
 
+  <section class="card">
+    <h2>Respaldo en Firestore</h2>
+    <p id="syncText" class="muted"></p>
+    <div class="pair-row">
+      <button id="chooseKey" class="primary">Elegir clave…</button>
+      <button id="syncNow" class="ghost" hidden>Sincronizar ahora</button>
+      <button id="disableSync" class="danger" hidden>Quitar clave</button>
+    </div>
+    <p id="syncError" class="muted err" hidden></p>
+  </section>
+
   <footer class="foot">
     <span id="summary" class="muted"></span>
     <button id="openData" class="link">Abrir carpeta de datos</button>

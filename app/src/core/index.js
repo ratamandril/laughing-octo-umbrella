@@ -11,6 +11,9 @@ const { Auth } = require('./auth');
 const { createProfilesProvider } = require('./profiles');
 const { createLauncher } = require('./launcher');
 const { NotesServer } = require('./server');
+const { SyncEngine } = require('./sync/engine');
+const { createFirestoreRemote, validateServiceAccount } = require('./sync/firestore-remote');
+const path = require('node:path');
 
 const DEFAULT_PORT = 47321;
 const version = require('../../package.json').version;
@@ -41,6 +44,43 @@ function createCore(options = {}) {
   });
 
   const notify = () => events.emit('change');
+
+  // ----- respaldo en Firestore (opcional) -----
+  const keyFile = path.join(dataDir, 'firebase-key.json');
+  const makeRemote = options.remoteFactory || ((serviceAccount) => createFirestoreRemote({ serviceAccount }));
+  let sync = null;
+
+  function readKey() {
+    try {
+      return JSON.parse(fs.readFileSync(keyFile, 'utf8'));
+    } catch {
+      return null;
+    }
+  }
+
+  function buildSync(serviceAccount) {
+    let remote = null;
+    let problem = null;
+    if (serviceAccount) {
+      try {
+        remote = makeRemote(serviceAccount);
+      } catch (err) {
+        problem = err.message;
+      }
+    }
+    const engine = new SyncEngine({ dir: dataDir, store, registry, remote, onError, ...(options.syncOptions || {}) });
+    if (problem) engine.status.lastError = problem;
+    engine.on('status', notify);
+    engine.on('applied', ({ notes, palette, profiles }) => {
+      server.broadcastNotes(notes);
+      if (palette) server.broadcastPalette(palette);
+      if (profiles) server.broadcastProfiles(registry.listProfiles());
+      notify();
+    });
+    return engine;
+  }
+  sync = buildSync(readKey());
+  server.on('change', () => sync.poke());
   server.on('change', notify);
   auth.on('change', notify);
   server.on('error-internal', (err) => events.emit('error-internal', err));
@@ -67,6 +107,7 @@ function createCore(options = {}) {
       detectedProfiles: await profiles.detect(),
       registeredProfiles: registry.listProfiles(),
       loadWarnings: store.loadWarnings,
+      sync: sync.getStatus(),
     };
   }
 
@@ -79,8 +120,42 @@ function createCore(options = {}) {
     profiles,
     dataDir,
     state,
-    start: () => server.start(),
-    stop: () => server.stop(),
+    get sync() {
+      return sync;
+    },
+    async start() {
+      const port = await server.start();
+      sync.start().catch((err) => events.emit('error-internal', err)); // no bloquea el arranque si no hay internet
+      return port;
+    },
+    async stop() {
+      await sync.stop();
+      await server.stop();
+    },
+    // Recibe el TEXTO del JSON de la cuenta de servicio. Devuelve { ok } o { ok:false, error }.
+    async enableSync(text) {
+      let json;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        return { ok: false, error: 'El archivo no es un JSON válido.' };
+      }
+      const problem = validateServiceAccount(json);
+      if (problem) return { ok: false, error: problem };
+      await sync.stop();
+      fs.writeFileSync(keyFile, JSON.stringify(json), { mode: 0o600 });
+      sync = buildSync(json);
+      await sync.start();
+      notify();
+      return { ok: true, status: sync.getStatus() };
+    },
+    async disableSync() {
+      await sync.stop();
+      fs.rmSync(keyFile, { force: true });
+      sync = buildSync(null);
+      notify();
+    },
+    syncNow: () => sync.syncNow(),
     newPairingCode: () => auth.createPairingCode(),
     revokeInstance: (id) => auth.revoke(id),
     renameProfile: async (id, name) => {

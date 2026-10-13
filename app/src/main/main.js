@@ -1,5 +1,6 @@
 'use strict';
 
+const fs = require('node:fs');
 const path = require('node:path');
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell, dialog } = require('electron');
 const { createCore } = require('../core');
@@ -84,6 +85,30 @@ function registerIpc() {
   ipcMain.handle('pairing:cancel', () => core.auth.cancelPairing());
   ipcMain.handle('instance:revoke', (_event, id) => (typeof id === 'string' ? core.revokeInstance(id) : false));
   ipcMain.handle('data:open', () => shell.openPath(core.dataDir));
+
+  // La clave se lee aquí, en el proceso principal: la ventana nunca la ve.
+  ipcMain.handle('sync:choose-key', async () => {
+    const pick = await dialog.showOpenDialog(win, {
+      title: 'Clave de la cuenta de servicio (JSON)',
+      properties: ['openFile'],
+      filters: [{ name: 'JSON', extensions: ['json'] }],
+    });
+    if (pick.canceled || !pick.filePaths[0]) return { ok: false, canceled: true };
+    let text;
+    try {
+      const stat = fs.statSync(pick.filePaths[0]);
+      if (stat.size > 64 * 1024) return { ok: false, error: 'El archivo es demasiado grande para ser una clave.' };
+      text = fs.readFileSync(pick.filePaths[0], 'utf8');
+    } catch (err) {
+      return { ok: false, error: 'No se pudo leer el archivo: ' + err.message };
+    }
+    return core.enableSync(text);
+  });
+  ipcMain.handle('sync:now', () => core.syncNow());
+  ipcMain.handle('sync:disable', async () => {
+    await core.disableSync();
+    return true;
+  });
 }
 
 app.on('second-instance', showWindow);

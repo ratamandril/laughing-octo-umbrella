@@ -25,6 +25,11 @@ function defaultDataDir() {
   core.events.on('error-storage', (err) => console.error('[almacenamiento]', err.message));
   core.events.on('error-internal', (err) => console.error('[interno]', err));
 
+  const keyPath = arg('firebase-key', process.env.NOTAS_FIREBASE_KEY);
+  if (keyPath) {
+    const result = await core.enableSync(require('node:fs').readFileSync(path.resolve(keyPath), 'utf8'));
+    if (!result.ok) console.error('Clave de Firebase no válida:', result.error);
+  }
   await core.start();
   const pairing = core.newPairingCode();
   console.log(`Notas por URL (servidor local) en http://127.0.0.1:${core.server.port}`);

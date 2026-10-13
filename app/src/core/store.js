@@ -139,6 +139,17 @@ class Store {
     return { palette: this.palette };
   }
 
+  // Paleta recibida de la sincronización: conserva su updatedAt y solo se aplica si es más reciente.
+  applyPalette(remote) {
+    const result = sanitizePalette(remote && remote.list);
+    if (result.error) return null;
+    const updatedAt = Number.isFinite(remote.updatedAt) ? remote.updatedAt : 0;
+    if (this.palette && this.palette.updatedAt >= updatedAt) return null;
+    this.palette = { list: result.list, updatedAt, seq: ++this.seq };
+    this.file.markDirty();
+    return this.palette;
+  }
+
   flush() {
     return this.file.flush();
   }

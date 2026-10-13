@@ -105,6 +105,14 @@ class Registry {
     return profile;
   }
 
+  // Perfil recibido de la sincronización: solo se añade si aún no existe ese id
+  importProfile(profile) {
+    if (this.profiles.has(profile.id)) return false;
+    this.profiles.set(profile.id, { id: profile.id, browser: profile.browser, dir: profile.dir, name: profile.name, email: profile.email || '' });
+    this.file.markDirty();
+    return true;
+  }
+
   renameProfile(id, name) {
     const profile = this.profiles.get(id);
     if (!profile) return null;

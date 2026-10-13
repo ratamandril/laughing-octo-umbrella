@@ -13,6 +13,7 @@ function el(tag, className, text) {
 const BROWSER_NAMES = { chrome: 'Chrome', edge: 'Edge', firefox: 'Firefox', other: 'Navegador' };
 let current = null;
 let tick = null;
+let keyError = ''; // error al elegir la clave (no viene del estado del servidor)
 
 function ago(timestamp) {
   if (!timestamp) return 'sin actividad desde que se abrió la app';
@@ -80,6 +81,30 @@ function renderProfiles(detected, registered) {
   }
 }
 
+const SYNC_TEXT = {
+  disabled: 'Sin configurar. Tus notas solo están en este equipo. Elige la clave JSON de una cuenta de servicio de Firebase para guardar una copia en la nube.',
+  connecting: 'Conectando con Firestore…',
+  online: 'Conectado. Las notas se copian en la nube al instante y se reciben los cambios de otros equipos.',
+  offline: 'Sin conexión con Firestore. Los cambios se acumulan y se subirán al volver; se reintenta solo.',
+  stopped: 'Detenido.',
+};
+
+function renderSync(sync) {
+  const enabled = sync.state !== 'disabled';
+  const parts = [SYNC_TEXT[sync.state] || ''];
+  if (enabled && sync.projectId) parts.push(`Proyecto: ${sync.projectId}.`);
+  if (enabled) parts.push(`Pendientes: ${sync.pending}.`);
+  if (enabled && sync.lastSync) parts.push(`Última subida ${ago(sync.lastSync)}.`);
+  $('#syncText').textContent = parts.filter(Boolean).join(' ');
+  $('#chooseKey').textContent = enabled ? 'Cambiar clave…' : 'Elegir clave…';
+  $('#syncNow').hidden = !enabled;
+  $('#disableSync').hidden = !enabled;
+  const error = $('#syncError');
+  const message = keyError || sync.lastError || '';
+  error.hidden = !message;
+  error.textContent = message;
+}
+
 function render(state) {
   current = state;
   const status = $('#status');
@@ -88,6 +113,7 @@ function render(state) {
   renderPairing(state.pairing);
   renderInstances(state.instances);
   renderProfiles(state.detectedProfiles, state.registeredProfiles);
+  renderSync(state.sync);
   const warnings = state.loadWarnings.length ? ` · ${state.loadWarnings.length} nota(s) descartadas al cargar` : '';
   $('#summary').textContent = `${state.notes} nota(s) · cambio nº ${state.seq}${warnings}`;
 }
@@ -103,6 +129,21 @@ $('#newCode').addEventListener('click', async () => {
 $('#cancelCode').addEventListener('click', async () => {
   await window.notasApp.cancelPairing();
   refresh();
+});
+$('#chooseKey').addEventListener('click', async () => {
+  const result = await window.notasApp.chooseSyncKey();
+  if (!result.canceled) keyError = result.ok ? '' : result.error;
+  refresh();
+});
+$('#syncNow').addEventListener('click', async () => {
+  await window.notasApp.syncNow();
+  refresh();
+});
+$('#disableSync').addEventListener('click', async () => {
+  if (window.confirm('¿Quitar la clave? Dejará de haber copia en la nube; tus notas locales y las que ya están en Firestore no se borran.')) {
+    await window.notasApp.disableSync();
+    refresh();
+  }
 });
 $('#openData').addEventListener('click', () => window.notasApp.openDataFolder());
 

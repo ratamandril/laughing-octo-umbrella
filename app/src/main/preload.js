@@ -8,6 +8,9 @@ contextBridge.exposeInMainWorld('notasApp', {
   newPairingCode: () => ipcRenderer.invoke('pairing:new'),
   cancelPairing: () => ipcRenderer.invoke('pairing:cancel'),
   revokeInstance: (id) => ipcRenderer.invoke('instance:revoke', id),
+  chooseSyncKey: () => ipcRenderer.invoke('sync:choose-key'),
+  syncNow: () => ipcRenderer.invoke('sync:now'),
+  disableSync: () => ipcRenderer.invoke('sync:disable'),
   openDataFolder: () => ipcRenderer.invoke('data:open'),
   onState: (callback) => {
     const handler = (_event, state) => callback(state);

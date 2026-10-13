@@ -136,6 +136,19 @@ class NotesServer extends EventEmitter {
     await this.registry.flush().catch(() => {});
   }
 
+  // Para cambios que no vienen de una extensión (p. ej. Firestore): se avisa a todas
+  broadcastNotes(notes) {
+    if (notes.length) this._broadcast({ type: 'notes', notes, seq: this.store.seq });
+  }
+
+  broadcastPalette(palette) {
+    this._broadcast({ type: 'palette', palette });
+  }
+
+  broadcastProfiles(profiles) {
+    this._broadcast({ type: 'profiles', profiles });
+  }
+
   onlineInstanceIds() {
     const ids = new Set();
     for (const ws of this.clients) if (ws.instanceId) ids.add(ws.instanceId);
@@ -401,6 +414,7 @@ class NotesServer extends EventEmitter {
     const result = this.store.setPalette(ctx.body.list);
     if (result.error) throw new HttpError(400, 'invalid_palette');
     this._broadcast({ type: 'palette', palette: result.palette }, ctx.instance.id);
+    this.emit('change');
     return ok({ palette: result.palette });
   }
 

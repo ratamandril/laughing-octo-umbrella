@@ -10,3 +10,8 @@ node_modules/
 Thumbs.db
 .vscode/
 .idea/
+
+# Claves de Firebase (cuentas de servicio)
+firebase-key*.json
+*-firebase-adminsdk-*.json
+serviceAccount*.json
