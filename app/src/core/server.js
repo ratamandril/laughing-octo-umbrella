@@ -98,6 +98,7 @@ class NotesServer extends EventEmitter {
       route('GET', /^\/health$/, false, () => ok({ ok: true, app: 'notas-por-url', protocol: PROTOCOL, version: this.version })),
       route('POST', /^\/pair$/, false, (ctx) => this._pair(ctx), 1024),
       route('GET', /^\/me$/, true, (ctx) => this._me(ctx)),
+      route('DELETE', /^\/me$/, true, (ctx) => this._unpair(ctx)),
       route('GET', /^\/profiles$/, true, () => this._profiles()),
       route('PUT', /^\/me\/profile$/, true, (ctx) => this._setProfile(ctx)),
       route('PATCH', /^\/profiles\/([\w-]{1,64})$/, true, (ctx) => this._renameProfile(ctx)),
@@ -300,6 +301,13 @@ class NotesServer extends EventEmitter {
       seq: this.store.seq,
       protocol: PROTOCOL,
     });
+  }
+
+  // La extensión se desvincula a sí misma
+  _unpair(ctx) {
+    this.auth.revoke(ctx.instance.id);
+    this.emit('change');
+    return ok({ ok: true });
   }
 
   async _profiles() {

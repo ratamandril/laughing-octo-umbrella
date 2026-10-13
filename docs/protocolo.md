@@ -20,6 +20,7 @@ La app escucha en `http://127.0.0.1:47321` (puerto configurable con `NOTAS_PORT`
 |---|---|
 | `GET /health` | `{ok, app, protocol, version}` |
 | `GET /me` | instancia, perfil asignado y `seq` actual |
+| `DELETE /me` | la extensión se desvincula (revoca su propio token) |
 | `GET /profiles` | `{detected, registered}` (perfiles de Chrome/Edge del equipo) |
 | `PUT /me/profile {browser, dir, name?}` | asigna esta extensión a un perfil detectado |
 | `PATCH /profiles/:id {name}` | renombra un perfil |

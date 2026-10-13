@@ -39,7 +39,17 @@ function swatchPicker(box, palette, selected, onChange) {
 }
 
 // mode: "simple" | "normal" | "detailed"
-function noteCard(note, { mode = 'normal', palette = [], onEdit, onDelete, onTag, onCycle, showUrl = false }) {
+const BROWSER_NAMES = { chrome: 'Chrome', edge: 'Edge' };
+
+function profileLabel(profile) {
+  return (BROWSER_NAMES[profile.browser] || 'Navegador') + ' · ' + profile.name;
+}
+
+// profiles: lista de perfiles de la app (null si la extensión no está conectada).
+// onOpen: abrir la nota en su navegador y perfil (solo se ofrece si es de otro perfil).
+function noteCard(note, { mode = 'normal', palette = [], onEdit, onDelete, onTag, onCycle, showUrl = false, profiles = null, myProfileId = null, onOpen = null }) {
+  const profile = profiles && note.profileId ? profiles.find((p) => p.id === note.profileId) || null : null;
+  const foreign = !!(profile && onOpen && note.profileId !== myProfileId);
   const cat = colorOf(palette, note.color);
   const card = el('article', { class: 'card mode-' + mode });
   if (cat) card.style.borderLeftColor = cat.hex;
@@ -62,6 +72,7 @@ function noteCard(note, { mode = 'normal', palette = [], onEdit, onDelete, onTag
   }
 
   const actions = el('span', { class: 'actions' },
+    foreign ? el('button', { class: 'link', title: 'Abrir en ' + profileLabel(profile), onclick: () => onOpen(note) }, 'Abrir en su perfil') : null,
     el('button', { class: 'link', onclick: () => onEdit(note) }, 'Editar'),
     el('button', { class: 'link danger', onclick: () => onDelete(note) }, 'Eliminar')
   );
@@ -85,6 +96,7 @@ function noteCard(note, { mode = 'normal', palette = [], onEdit, onDelete, onTag
     el('strong', {}, note.title),
     el('span', { class: 'badge' }, scopeLabel)
   ));
+  if (profile) card.append(el('div', { class: 'profile-line muted' }, profileLabel(profile) + (note.profileId === myProfileId ? ' (este perfil)' : '')));
 
   if (mode === 'detailed' && cat) {
     card.append(el('div', { class: 'cat' },

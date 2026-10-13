@@ -17,11 +17,13 @@
     </span>
   </header>
   <div id="msg"></div>
+  <button id="conn" class="conn-line" type="button" hidden></button>
 
   <div class="row grow">
     <input id="search" placeholder="Buscar por título, descripción, URL o etiqueta…">
     <select id="fColor"></select>
     <select id="fTag"></select>
+    <select id="fProfile" hidden></select>
     <select id="fScope">
       <option value="">Página y sitio</option>
       <option value="page">Solo de página</option>
@@ -50,6 +52,7 @@
   </dialog>
 
   <script src="storage.js"></script>
+  <script src="link.js"></script>
   <script src="ui.js"></script>
   <script src="notes.js"></script>
 </body>

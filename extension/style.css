@@ -114,3 +114,13 @@ input:focus, textarea:focus, select:focus { outline:none; border-color:var(--acc
 button:focus-visible, .card:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
 .card.clickable { cursor:pointer; }
 .card.clickable:hover { border-color:var(--muted); }
+
+/* Conexión con la app */
+.p-conn { display:block; width:100%; text-align:left; background:none; border:0; border-bottom:1px solid var(--line); padding:.3rem .9rem; color:var(--muted); font-size:.82rem; cursor:pointer; }
+.p-conn.bad { color:var(--danger); }
+.conn-line { background:none; border:0; padding:0; margin:.2rem 0 .6rem; color:var(--muted); font-size:.86rem; cursor:pointer; text-align:left; }
+.conn-line.bad { color:var(--danger); }
+.profile-line { font-size:.82rem; margin:.1rem 0 .3rem; }
+.link-box { max-width:34rem; }
+.link-box .row { align-items:center; }
+.link-box input#code { max-width:12rem; text-transform:uppercase; letter-spacing:.15em; }

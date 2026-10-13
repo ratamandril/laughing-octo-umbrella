@@ -2,9 +2,15 @@
 // Cada nota se guarda en su propia clave "n_<id>" para respetar el límite
 // de 8 KB por elemento de chrome.storage.sync. La paleta y los ajustes
 // van en claves aparte ("palette", "settings").
+//
+// Dos modos:
+//  - Sin app: todo en chrome.storage.sync (como siempre).
+//  - Conectada a la app (existe "link" en storage.local): las notas y la paleta se leen de una
+//    caché en storage.local. Cada cambio se guarda en la caché y en una cola de salida ("outbox")
+//    que el service worker envía a la app (ver sync.js). Los ajustes siguen en sync.
 const NotesStore = (() => {
   const PREFIX = 'n_';
-  const area = chrome.storage.sync;
+  const sync = chrome.storage.sync;
   const MAX_TAGS = 10;
   const MAX_COLORS = 12;
 
@@ -47,8 +53,55 @@ const NotesStore = (() => {
     return out;
   }
 
+  // ---------- Modo y cola de salida ----------
+  async function getLink() {
+    const { link } = await chrome.storage.local.get('link');
+    return link && link.token ? link : null;
+  }
+
+  // Todos los contextos de la extensión comparten este candado para tocar la cola
+  const withLock = (fn) => (typeof navigator !== 'undefined' && navigator.locks ? navigator.locks.request('notas-outbox', fn) : fn());
+
+  async function areaNow() {
+    return (await getLink()) ? chrome.storage.local : sync;
+  }
+
+  const nextT = (prev) => Math.max(Date.now(), ((prev && prev.t) || 0) + 1);
+
+  // Guarda notas y borrados. En modo app también los anota en la cola de salida.
+  async function writeNotes({ put = [], del = [], palette = null }) {
+    const link = await getLink();
+    if (!link) {
+      const toSet = {};
+      for (const n of put) toSet[PREFIX + n.id] = n;
+      if (palette) toSet.palette = palette;
+      if (Object.keys(toSet).length) await sync.set(toSet);
+      if (del.length) await sync.remove(del.map((id) => PREFIX + id));
+      return;
+    }
+    await withLock(async () => {
+      const { outbox: current } = await chrome.storage.local.get('outbox');
+      const outbox = { notes: { ...((current && current.notes) || {}) }, palette: (current && current.palette) || null };
+      const toSet = {};
+      for (const n of put) {
+        const note = { ...n, profileId: n.profileId === undefined ? link.profileId || null : n.profileId };
+        toSet[PREFIX + n.id] = note;
+        outbox.notes[n.id] = { op: 'put', t: nextT(outbox.notes[n.id]) };
+      }
+      for (const id of del) outbox.notes[id] = { op: 'del', t: nextT(outbox.notes[id]) };
+      if (palette) {
+        toSet.palette = palette;
+        outbox.palette = nextT({ t: outbox.palette });
+      }
+      toSet.outbox = outbox;
+      await chrome.storage.local.set(toSet);
+      if (del.length) await chrome.storage.local.remove(del.map((id) => PREFIX + id));
+    });
+  }
+
   // ---------- Notas ----------
   async function getAll() {
+    const area = await areaNow();
     const data = await area.get(null);
     return Object.entries(data)
       .filter(([k]) => k.startsWith(PREFIX))
@@ -73,7 +126,7 @@ const NotesStore = (() => {
   }
 
   async function save(note) {
-    await area.set({ [PREFIX + note.id]: note });
+    await writeNotes({ put: [note] });
   }
 
   async function update(id, patch) {
@@ -84,7 +137,7 @@ const NotesStore = (() => {
   }
 
   async function remove(id) {
-    await area.remove(PREFIX + id);
+    await writeNotes({ del: [id] });
   }
 
   // Notas que aplican a una pestaña: misma URL (scope page) o mismo dominio (scope domain)
@@ -95,10 +148,11 @@ const NotesStore = (() => {
   }
 
   // Consulta por texto, etiqueta, categoría (color) y alcance. color === 'none' → sin categoría
-  function filter(notes, { q = '', tag = '', color = '', scope = '' } = {}) {
+  function filter(notes, { q = '', tag = '', color = '', scope = '', profile = '' } = {}) {
     const s = q.trim().toLowerCase();
     return notes.filter((n) =>
       (!scope || n.scope === scope) &&
+      (!profile || (profile === 'none' ? !n.profileId : n.profileId === profile)) &&
       (!tag || n.tags.includes(tag)) &&
       (!color || (color === 'none' ? !n.color : n.color === color)) &&
       (!s || [n.title, n.description, n.url, ...n.tags].some((t) => (t || '').toLowerCase().includes(s)))
@@ -127,6 +181,7 @@ const NotesStore = (() => {
   }
 
   async function getPalette() {
+    const area = await areaNow();
     const { palette } = await area.get('palette');
     return Array.isArray(palette) ? palette : DEFAULT_PALETTE;
   }
@@ -136,14 +191,14 @@ const NotesStore = (() => {
     const keep = new Set(next.map((c) => c.id));
     const prev = await getPalette();
     const removed = new Set(prev.filter((c) => !keep.has(c.id)).map((c) => c.id));
-    const toSet = { palette: next };
+    // las notas que usaban una categoría eliminada quedan sin color
+    const put = [];
     if (removed.size) {
-      // las notas que usaban una categoría eliminada quedan sin color
       for (const n of await getAll()) {
-        if (n.color && removed.has(n.color)) toSet[PREFIX + n.id] = { ...n, color: null };
+        if (n.color && removed.has(n.color)) put.push({ ...n, color: null, updatedAt: Date.now() });
       }
     }
-    await area.set(toSet);
+    await writeNotes({ put, palette: next });
   }
 
   // ---------- Ajustes ----------
@@ -158,7 +213,7 @@ const NotesStore = (() => {
   };
 
   async function getSettings() {
-    const { settings } = await area.get('settings');
+    const { settings } = await sync.get('settings');
     return { ...DEFAULT_SETTINGS, ...(settings || {}) };
   }
 
@@ -174,7 +229,7 @@ const NotesStore = (() => {
   }
 
   async function saveSettings(patch) {
-    await area.set({ settings: { ...(await getSettings()), ...patch } });
+    await sync.set({ settings: { ...(await getSettings()), ...patch } });
   }
 
   // ---------- Exportar / importar ----------
@@ -216,7 +271,7 @@ const NotesStore = (() => {
       throw new Error('El archivo no es una exportación válida de Notas por URL.');
     }
     const existing = new Map((await getAll()).map((n) => [n.id, n]));
-    const toSet = {};
+    const put = [];
     let added = 0, updated = 0, skipped = 0;
 
     for (const raw of data.notes) {
@@ -224,25 +279,49 @@ const NotesStore = (() => {
       if (!n) { skipped++; continue; }
       const cur = existing.get(n.id);
       if (cur && cur.updatedAt >= n.updatedAt) { skipped++; continue; }
-      toSet[PREFIX + n.id] = n;
+      put.push(n);
       if (cur) updated++; else added++;
     }
 
+    let palette = null;
     if (Array.isArray(data.palette)) {
       const byId = new Map((await getPalette()).map((c) => [c.id, c]));
+      const before = byId.size;
       for (const c of data.palette) {
         const s = sanitizeColor(c);
         if (s && !byId.has(s.id)) byId.set(s.id, s);
       }
-      toSet.palette = [...byId.values()].slice(0, MAX_COLORS);
+      if (byId.size !== before) palette = [...byId.values()].slice(0, MAX_COLORS);
     }
 
-    if (Object.keys(toSet).length) await area.set(toSet);
+    if (put.length || palette) await writeNotes({ put, palette });
     return { added, updated, skipped };
+  }
+
+  // ---------- Notas de antes de conectar con la app (viven en storage.sync) ----------
+  async function getLegacy() {
+    const data = await sync.get(null);
+    const notes = Object.entries(data).filter(([k]) => k.startsWith(PREFIX)).map(([, v]) => sanitizeNote(v)).filter(Boolean);
+    const palette = Array.isArray(data.palette) ? data.palette.map(sanitizeColor).filter(Boolean) : null;
+    return { notes, palette };
+  }
+
+  // Pasa a la app las notas y categorías de este perfil. No borra nada de sync (queda como copia).
+  async function importLegacy() {
+    const { notes, palette } = await getLegacy();
+    const link = await getLink();
+    if (!link) throw new Error('Primero conecta la extensión con la app.');
+    const existing = new Map((await getAll()).map((n) => [n.id, n]));
+    const put = notes.filter((n) => { const c = existing.get(n.id); return !c || c.updatedAt < n.updatedAt; });
+    await writeNotes({ put, palette: palette && palette.length ? palette : null });
+    await chrome.storage.local.set({ legacyImported: true });
+    return { notes: put.length, palette: palette ? palette.length : 0 };
   }
 
   return {
     MAX_COLORS, DEFAULT_PALETTE,
+    getLink, getLegacy, importLegacy,
+    internal: { PREFIX, withLock, writeNotes },
     isSupported, normalizeUrl, hostOf, parseTags,
     getAll, create, save, update, remove, forUrl, filter, allTags,
     getPalette, savePalette, DEFAULT_SETTINGS, getSettings, saveSettings, getLast, saveLast,

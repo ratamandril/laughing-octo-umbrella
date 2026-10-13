@@ -3,9 +3,12 @@ let all = [];
 let palette = [];
 let editing = null;
 let eColor = null;
+let link = null;
+let profiles = [];
 
 async function load() {
-  [all, palette] = await Promise.all([NotesStore.getAll(), NotesStore.getPalette()]);
+  [all, palette, link, profiles] = await Promise.all([NotesStore.getAll(), NotesStore.getPalette(), NotesStore.getLink(), Link.profiles()]);
+  Link.paintStatus($('#conn'), () => openPage('options.html'));
   fillFilters();
   render();
 }
@@ -20,11 +23,23 @@ function fillFilters() {
     ...[...tags].map(([t, n]) => new Option('#' + t + ' (' + n + ')', t)));
   fc.value = curC;
   ft.value = curT;
+
+  // Filtro por perfil: solo con la app conectada
+  const fp = $('#fProfile');
+  const curP = fp.value;
+  fp.hidden = !link;
+  if (link) {
+    fp.replaceChildren(new Option('Todos los perfiles', ''),
+      ...profiles.map((p) => new Option(profileLabel(p) + (p.id === link.profileId ? ' (este)' : ''), p.id)),
+      new Option('Sin perfil', 'none'));
+    fp.value = curP;
+  }
 }
 
 function render() {
   const filtered = NotesStore.filter(all, {
     q: $('#search').value, tag: $('#fTag').value, color: $('#fColor').value, scope: $('#fScope').value,
+    profile: link ? $('#fProfile').value : '',
   });
   $('#count').textContent = filtered.length + ' de ' + all.length + ' notas';
 
@@ -42,9 +57,19 @@ function render() {
       list.append(noteCard(n, {
         mode: 'detailed', palette, showUrl: true,
         onEdit: openEdit, onDelete: removeNote,
+        profiles: link ? profiles : null, myProfileId: link && link.profileId, onOpen: openInProfile,
         onTag: (t) => { $('#fTag').value = t; render(); },
       }));
     }
+  }
+}
+
+async function openInProfile(note) {
+  try {
+    await Link.openNote(note.id);
+    msg('Abriendo en ' + (profiles.find((p) => p.id === note.profileId) ? profileLabel(profiles.find((p) => p.id === note.profileId)) : 'su perfil') + '…');
+  } catch (err) {
+    msg(err.message, true);
   }
 }
 
@@ -115,9 +140,12 @@ $('#importFile').addEventListener('change', async (e) => {
 
 $('#optionsBtn').addEventListener('click', () => openPage('options.html'));
 $('#search').addEventListener('input', render);
-for (const id of ['#fColor', '#fTag', '#fScope']) $(id).addEventListener('change', render);
+for (const id of ['#fColor', '#fTag', '#fScope', '#fProfile']) $(id).addEventListener('change', render);
 
 // Se refresca solo cuando cambian los datos, incluso si vienen de otro dispositivo
-chrome.storage.onChanged.addListener(load);
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'session') Link.paintStatus($('#conn'), () => openPage('options.html'));
+  else load();
+});
 
 load();

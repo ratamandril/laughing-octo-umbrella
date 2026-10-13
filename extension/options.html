@@ -19,6 +19,34 @@
     </select>
   </div>
 
+  <h2 style="margin-top:32px">Conexión con la app</h2>
+  <p class="muted">La app de escritorio guarda las notas de todos tus perfiles de Chrome y Edge, las comparte entre ellos y puede abrir cada nota en su perfil. Ábrela, pulsa "Generar código" y escríbelo aquí. Se hace una sola vez por perfil.</p>
+  <div class="link-box">
+    <div id="linkOff">
+      <p id="linkWarn" class="error" hidden></p>
+      <div class="row">
+        <input id="code" placeholder="XXXX-XXXX" maxlength="9" autocomplete="off" spellcheck="false">
+        <button class="primary" id="pairBtn">Conectar</button>
+      </div>
+    </div>
+    <div id="linkOn" hidden>
+      <p id="linkState"></p>
+      <div class="field">
+        <label for="profileSel">Este navegador es el perfil…</label>
+        <select id="profileSel"></select>
+      </div>
+      <div class="row">
+        <button class="ghost" id="saveProfile">Guardar perfil</button>
+        <button class="ghost danger" id="unpairBtn">Desconectar</button>
+      </div>
+      <div id="importBox" hidden>
+        <p id="importText"></p>
+        <button class="primary" id="importLegacy">Importar a la app</button>
+      </div>
+    </div>
+    <div id="linkMsg"></div>
+  </div>
+
   <h2 style="margin-top:32px">Categorías (colores)</h2>
   <p class="muted">Cada color funciona como una categoría: ponle un nombre y una descripción de para qué lo usas. La descripción aparece al pasar el cursor sobre la nota y en la vista detallada. Si eliminas una categoría, las notas que la usaban quedan sin color.</p>
   <div id="palette"></div>
@@ -34,6 +62,7 @@
   <p class="muted">El navegador administra los atajos de las extensiones; el botón abre esa página para que lo cambies.</p>
 
   <script src="storage.js"></script>
+  <script src="link.js"></script>
   <script src="ui.js"></script>
   <script src="options.js"></script>
 </body>

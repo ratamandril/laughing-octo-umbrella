@@ -316,3 +316,18 @@ describe('bulk con tombstones', () => {
     }
   });
 });
+
+describe('DELETE /me', () => {
+  test('la extensión puede desvincularse y su token deja de valer', async () => {
+    const ctx = await startCore();
+    try {
+      const a = await pair(ctx);
+      const r = await request(ctx.port, { method: 'DELETE', path: '/me', origin: a.origin, token: a.token });
+      assert.equal(r.status, 200);
+      assert.equal((await request(ctx.port, { path: '/me', origin: a.origin, token: a.token })).status, 401);
+      assert.equal(ctx.core.registry.listInstances().length, 0);
+    } finally {
+      await ctx.close();
+    }
+  });
+});

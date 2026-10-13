@@ -1,4 +1,4 @@
-importScripts('storage.js');
+importScripts('storage.js', 'link.js', 'sync.js');
 
 // ---- Contador en el ícono: notas que aplican a la pestaña activa ----
 async function updateBadge(tabId, url) {
@@ -56,4 +56,24 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
     // Si el navegador no permite abrir el popup, se abre como ventana pequeña
     chrome.windows.create({ url: chrome.runtime.getURL('popup.html'), type: 'popup', width: 420, height: 680 });
   }
+});
+
+// ---- Conexión con la app local ----
+Sync.start();
+
+chrome.alarms.create('notas-reconectar', { periodInMinutes: 1 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'notas-reconectar') Sync.ensure();
+});
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg && msg.type === 'link:restart') Sync.restart();
+  if (msg && msg.type === 'link:retry') Sync.ensure();
+});
+
+// Cada cambio en la cola de salida se envía a la app
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local' || !changes.outbox || !changes.outbox.newValue) return;
+  const { notes, palette } = changes.outbox.newValue;
+  if (palette || Object.keys(notes || {}).length) Sync.flush();
 });

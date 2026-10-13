@@ -17,6 +17,14 @@ Datos en `%APPDATA%\notas-por-url-app` (`notes.json`, `config.json`). Se escribe
 - `src/main` y `src/renderer`: ventana de Electron (`contextIsolation`, `sandbox`, CSP estricta).
 - Almacenamiento en JSON en vez de SQLite: sin módulos nativos que compilar en Windows, suficiente para miles de notas.
 
+## Conectar las extensiones
+1. Abre la app y pulsa **Generar código**.
+2. En cada perfil: carga `extension/`, abre **Ajustes → Conexión con la app**, escribe el código y elige a qué perfil corresponde ese navegador.
+3. Si ese perfil ya tenía notas, aparece **Importar a la app** (se importan una sola vez; las originales quedan como copia).
+4. Las notas de todos los perfiles se ven en cada uno, con su insignia de perfil y el botón **Abrir en su perfil**. Si la app está cerrada, los cambios se guardan y se envían al volver.
+
+Prueba de extremo a extremo (dos Chromium con la extensión real contra la app): `node e2e/extension.e2e.js` (necesita Playwright y Chromium).
+
 ## Respaldo en Firestore (opcional)
 Ver `../docs/firebase.md`. Se activa en la ventana con **Elegir clave…**, o en modo servidor con `--firebase-key ruta.json` / `NOTAS_FIREBASE_KEY`.
 

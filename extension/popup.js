@@ -12,6 +12,8 @@ let selectedColor = null;
 let filterColor = '';
 let filterTag = '';
 let shownNotes = [];
+let link = null; // enlace con la app (null si la extensión no está conectada)
+let profiles = [];
 const viewOverride = new Map(); // id de nota -> vista temporal
 
 // ---------- Ajustes de vista ----------
@@ -78,9 +80,10 @@ async function init() {
   if (draft) { try { tab = await chrome.tabs.get(draft.tabId); } catch { /* la pestaña se cerró */ } }
   if (!tab) [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
-  [palette, settings, last] = await Promise.all([
-    NotesStore.getPalette(), NotesStore.getSettings(), NotesStore.getLast(),
+  [palette, settings, last, link, profiles] = await Promise.all([
+    NotesStore.getPalette(), NotesStore.getSettings(), NotesStore.getLast(), NotesStore.getLink(), Link.profiles(),
   ]);
+  paintConn();
   cacheSettings();
   applySettings();
   fillSettingsPanel();
@@ -114,6 +117,7 @@ function fillFilters(related) {
 }
 
 async function render() {
+  [link, profiles] = await Promise.all([NotesStore.getLink(), Link.profiles()]);
   const related = NotesStore.forUrl(await NotesStore.getAll(), tab.url);
   fillFilters(related);
   const shown = NotesStore.filter(related, { tag: filterTag, color: filterColor });
@@ -140,6 +144,7 @@ function draw() {
       onEdit: startEdit, onDelete: removeNote,
       onTag: (t) => { filterTag = t; render(); },
       onCycle: settings.view === 'simple' ? cycleNote : null,
+      profiles: link ? profiles : null, myProfileId: link && link.profileId, onOpen: openInProfile,
     }));
   }
   wrap.scrollTop = top;
@@ -152,6 +157,33 @@ function cycleNote(note) {
   if (next === 'simple') viewOverride.delete(note.id); else viewOverride.set(note.id, next);
   draw();
 }
+
+async function openInProfile(note) {
+  try {
+    await Link.openNote(note.id);
+    $('#error').textContent = '';
+  } catch (err) {
+    $('#error').textContent = err.message;
+  }
+}
+
+function paintConn() {
+  Link.paintStatus($('#conn'), async () => { await openPage('options.html'); window.close(); });
+}
+
+// Cambios que llegan de otros perfiles (a través de la app) o del estado de la conexión
+let refreshTimer = null;
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'session') return paintConn();
+  if (area !== 'local' || !tab) return;
+  if (!Object.keys(changes).some((k) => k.startsWith('n_') || k === 'palette' || k === 'profiles' || k === 'link')) return;
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(async () => {
+    palette = await NotesStore.getPalette();
+    drawSwatches();
+    render();
+  }, 120);
+});
 
 // ---------- Formulario ----------
 function startEdit(note) {
