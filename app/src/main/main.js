@@ -2,7 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell, dialog } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell, dialog, clipboard } = require('electron');
 const { createCore } = require('../core');
 
 // Una sola copia a la vez: dos servidores se pelearían por el puerto y por los archivos de datos
@@ -53,9 +53,40 @@ function createWindow() {
   win.webContents.on('will-navigate', (event) => event.preventDefault());
 }
 
+const trayImages = {};
+function trayImage(name) {
+  if (!trayImages[name]) {
+    trayImages[name] = nativeImage.createFromPath(path.join(__dirname, '..', '..', 'assets', `tray-${name}.png`)).resize({ width: 16, height: 16 });
+  }
+  return trayImages[name];
+}
+
+// Ícono y texto de la bandeja según el estado de la copia en la nube
+function trayLook(sync) {
+  switch (sync.state) {
+    case 'online':
+      return sync.pending ? ['warn', `Notas por URL — subiendo ${sync.pending} cambio(s) a la nube`] : ['ok', 'Notas por URL — todo a salvo en la nube'];
+    case 'offline':
+      return ['bad', `Notas por URL — sin internet${sync.pending ? ` · ${sync.pending} cambio(s) sin subir` : ''}`];
+    case 'connecting':
+      return ['warn', 'Notas por URL — conectando con la nube…'];
+    default:
+      return ['off', 'Notas por URL — nube sin configurar (solo en este equipo)'];
+  }
+}
+
+let lastTray = '';
+function updateTray(state) {
+  if (!tray || !state) return;
+  const [name, tip] = trayLook(state.sync);
+  if (name + tip === lastTray) return;
+  lastTray = name + tip;
+  tray.setImage(trayImage(name));
+  tray.setToolTip(tip);
+}
+
 function createTray() {
-  const image = nativeImage.createFromPath(iconPath).resize({ width: 16, height: 16 });
-  tray = new Tray(image);
+  tray = new Tray(trayImage('off'));
   tray.setToolTip('Notas por URL — servidor local');
   tray.setContextMenu(
     Menu.buildFromTemplate([
@@ -74,7 +105,9 @@ function watchState() {
     if (timer) return;
     timer = setTimeout(async () => {
       timer = null;
-      if (win && !win.isDestroyed()) win.webContents.send('state', await core.state());
+      const state = await core.state();
+      updateTray(state);
+      if (win && !win.isDestroyed()) win.webContents.send('state', state);
     }, 200);
   });
 }
@@ -104,6 +137,28 @@ function registerIpc() {
     }
     return core.enableSync(text);
   });
+  // ----- notas de todos los perfiles, papelera y permisos -----
+  const str = (v) => (typeof v === 'string' ? v : '');
+  ipcMain.handle('notes:list', () => core.notesView());
+  ipcMain.handle('notes:open', async (_event, id) => {
+    try {
+      await core.openNote(str(id));
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err.code || err.message };
+    }
+  });
+  ipcMain.handle('notes:copy', (_event, id) => {
+    const url = core.noteUrl(str(id));
+    if (url) clipboard.writeText(url);
+    return !!url;
+  });
+  ipcMain.handle('notes:delete', (_event, id) => !!core.deleteNote(str(id)));
+  ipcMain.handle('trash:list', () => core.trash());
+  ipcMain.handle('trash:restore', (_event, id) => !!core.restoreNote(str(id)));
+  ipcMain.handle('trash:purge', (_event, id) => !!core.purgeNote(str(id)));
+  ipcMain.handle('trash:empty', () => core.emptyTrash());
+  ipcMain.handle('access:set', (_event, instanceId, ids) => core.setCanSee(str(instanceId), Array.isArray(ids) ? ids.map(str) : []));
   ipcMain.handle('sync:now', () => core.syncNow());
   ipcMain.handle('sync:disable', async () => {
     await core.disableSync();
@@ -133,6 +188,7 @@ app.whenReady().then(async () => {
   registerIpc();
   createWindow();
   createTray();
+  updateTray(await core.state());
   watchState();
 });
 

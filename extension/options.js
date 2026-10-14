@@ -133,6 +133,7 @@ $('#saveProfile').addEventListener('click', async () => {
     const res = await Link.request('/me/profile', { method: 'PUT', body: { browser: Link.browserKind(), dir } });
     const link = await NotesStore.getLink();
     await Link.save({ ...link, profileId: res.profile.id });
+    Link.restart(); // empieza a sincronizar las notas de ese perfil
     linkMsg('Perfil guardado: ' + res.profile.name + '.');
   } catch (err) {
     linkMsg(err.message, true);
@@ -156,8 +157,8 @@ $('#unpairBtn').addEventListener('click', async () => {
   const warn = pending ? ' Hay ' + pending + ' cambios sin enviar a la app que se perderán.' : '';
   if (!confirm('¿Desconectar este perfil de la app?' + warn + ' Las notas siguen guardadas en la app.')) return;
   await Link.unlink();
-  linkMsg('Desconectada.');
-  renderLink();
+  await renderLink();
+  linkMsg('Desconectada de la app. Las notas siguen guardadas en la app; este perfil vuelve a usar solo las notas de su navegador.');
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {

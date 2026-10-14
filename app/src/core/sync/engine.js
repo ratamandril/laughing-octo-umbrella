@@ -50,7 +50,7 @@ class SyncEngine extends EventEmitter {
   }
 
   getStatus() {
-    return { ...this.status, pending: this._pendingCount() };
+    return { ...this.status, pending: this._pendingCount(), syncedSeq: this.state.cursor };
   }
 
   _set(patch) {

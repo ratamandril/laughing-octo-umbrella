@@ -16,6 +16,11 @@
   <div id="pageInfo" class="p-info muted"></div>
   <button id="conn" class="p-conn" type="button" hidden></button>
 
+  <div id="notice" class="p-info muted" hidden></div>
+
+  <div class="p-search">
+    <input id="search" type="search" placeholder="Buscar en las notas…" aria-label="Buscar en las notas" autocomplete="off">
+  </div>
   <div id="filters" class="p-filters" hidden>
     <select id="fColor" class="mini"></select>
     <select id="fTag" class="mini"></select>
@@ -23,9 +28,26 @@
 
   <!-- Única zona con barra de desplazamiento -->
   <main id="listWrap" class="p-list">
-    <h2 id="relatedTitle" hidden></h2>
-    <section id="related"></section>
-    <p id="empty" class="muted" hidden>Aún no hay notas para esta página.</p>
+    <section class="sec">
+      <button type="button" id="pageHead" class="sec-head" aria-expanded="true" aria-controls="related">
+        <span class="chev" aria-hidden="true">▾</span><span id="pageTitle">Notas de esta página</span>
+      </button>
+      <div id="pageBody" class="sec-body">
+        <section id="related"></section>
+        <p id="empty" class="muted" hidden>Aún no hay notas para esta página.</p>
+      </div>
+    </section>
+    <section class="sec">
+      <button type="button" id="allHead" class="sec-head" aria-expanded="false" aria-controls="allBody">
+        <span class="chev" aria-hidden="true">▾</span><span id="allTitle">Todas las notas</span>
+      </button>
+      <div id="allBody" class="sec-body" hidden>
+        <p id="allHint" class="muted" hidden>Las de esta página están en la sección de arriba.</p>
+        <section id="allNotes"></section>
+        <button type="button" id="moreAll" class="ghost" hidden>Mostrar más</button>
+        <p id="allEmpty" class="muted" hidden>No hay otras notas.</p>
+      </div>
+    </section>
   </main>
 
   <!-- Zona fija -->

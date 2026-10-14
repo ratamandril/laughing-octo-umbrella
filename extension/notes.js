@@ -7,7 +7,7 @@ let link = null;
 let profiles = [];
 
 async function load() {
-  [all, palette, link, profiles] = await Promise.all([NotesStore.getAll(), NotesStore.getPalette(), NotesStore.getLink(), Link.profiles()]);
+  [all, palette, link, profiles, safetyCtx] = await Promise.all([NotesStore.getAll(), NotesStore.getPalette(), NotesStore.getLink(), Link.profiles(), Link.safetyContext()]);
   Link.paintStatus($('#conn'), () => openPage('options.html'));
   fillFilters();
   render();
@@ -27,8 +27,8 @@ function fillFilters() {
   // Filtro por perfil: solo con la app conectada
   const fp = $('#fProfile');
   const curP = fp.value;
-  fp.hidden = !link;
-  if (link) {
+  fp.hidden = !multi();
+  if (multi()) {
     fp.replaceChildren(new Option('Todos los perfiles', ''),
       ...profiles.map((p) => new Option(profileLabel(p) + (p.id === link.profileId ? ' (este)' : ''), p.id)),
       new Option('Sin perfil', 'none'));
@@ -36,33 +36,124 @@ function fillFilters() {
   }
 }
 
+// ---------- Visualización propia de esta página (no depende del ajuste del popup) ----------
+const DEFAULT_VIEW = { view: 'detailed', sort: 'recent', group: 'site', collapsed: [] };
+let prefs = { ...DEFAULT_VIEW };
+try { prefs = { ...DEFAULT_VIEW, ...JSON.parse(localStorage.getItem('pageView') || '{}') }; } catch { /* sin caché */ }
+const collapsed = new Set(prefs.collapsed);
+const viewOverride = new Map(); // id de nota -> vista temporal
+
+function savePrefs() {
+  prefs.collapsed = [...collapsed];
+  try { localStorage.setItem('pageView', JSON.stringify(prefs)); } catch { /* sin caché */ }
+}
+
+let safetyCtx = null;
+const NEXT_VIEW = { simple: 'normal', normal: 'detailed', detailed: 'simple' };
+
+function sortNotes(list) {
+  const by = {
+    recent: (a, b) => b.updatedAt - a.updatedAt,
+    old: (a, b) => a.updatedAt - b.updatedAt,
+    az: (a, b) => a.title.localeCompare(b.title, 'es'),
+  }[prefs.sort] || ((a, b) => b.updatedAt - a.updatedAt);
+  return [...list].sort(by);
+}
+
+function cardOptions(n) {
+  const mode = viewOverride.get(n.id) || prefs.view;
+  return {
+    mode, palette, showUrl: true,
+    onEdit: openEdit, onDelete: removeNote,
+    onTag: (t) => { $('#fTag').value = t; render(); },
+    onCycle: prefs.view === 'simple' ? cycleNote : null,
+    onView: setNoteView,
+    onNotice: (text, isError) => msg(text, isError),
+    profiles: multi() ? profiles : null, myProfileId: link && link.profileId, onOpen: openInProfile,
+    safety: Link.noteSafety(n, safetyCtx),
+  };
+}
+
+function cycleNote(note) {
+  const next = NEXT_VIEW[viewOverride.get(note.id) || 'simple'];
+  if (next === 'simple') viewOverride.delete(note.id); else viewOverride.set(note.id, next);
+  render();
+}
+
+function setNoteView(note, mode) {
+  if (mode === prefs.view) viewOverride.delete(note.id); else viewOverride.set(note.id, mode);
+  render();
+}
+
+// Con una sola persona/perfil visible no hace falta mostrar ni filtrar por perfil
+const multi = () => !!link && profiles.length > 1;
+
+function groupKey(n) {
+  if (prefs.group === 'profile') return 'p:' + (n.profileId || 'none');
+  return 'h:' + n.host;
+}
+
+function groupLabel(key) {
+  if (key.startsWith('p:')) {
+    const p = profiles.find((x) => x.id === key.slice(2));
+    return p ? profileLabel(p) : 'Sin perfil';
+  }
+  return key.slice(2);
+}
+
 function render() {
+  if (prefs.group === 'profile' && !multi()) prefs.group = 'site';
   const filtered = NotesStore.filter(all, {
     q: $('#search').value, tag: $('#fTag').value, color: $('#fColor').value, scope: $('#fScope').value,
-    profile: link ? $('#fProfile').value : '',
+    profile: multi() ? $('#fProfile').value : '',
   });
+  const searching = !!$('#search').value.trim();
   $('#count').textContent = filtered.length + ' de ' + all.length + ' notas';
-
-  const groups = new Map();
-  for (const n of filtered) {
-    if (!groups.has(n.host)) groups.set(n.host, []);
-    groups.get(n.host).push(n);
-  }
+  $('#pView').value = prefs.view;
+  $('#pSort').value = prefs.sort;
+  $('#pGroup').value = prefs.group;
+  $('#pGroup').querySelector('[value=profile]').hidden = !multi();
+  const grouped = prefs.group !== 'none';
+  $('#collapseAll').hidden = !grouped;
+  $('#expandAll').hidden = !grouped;
 
   const list = $('#list');
   list.replaceChildren();
-  for (const [host, notes] of [...groups].sort((a, b) => a[0].localeCompare(b[0]))) {
-    list.append(el('h2', { class: 'group-title' }, host));
-    for (const n of notes) {
-      list.append(noteCard(n, {
-        mode: 'detailed', palette, showUrl: true,
-        onEdit: openEdit, onDelete: removeNote,
-        profiles: link ? profiles : null, myProfileId: link && link.profileId, onOpen: openInProfile,
-        onTag: (t) => { $('#fTag').value = t; render(); },
-      }));
-    }
+  if (!grouped) {
+    for (const n of sortNotes(filtered)) list.append(noteCard(n, cardOptions(n)));
+    return;
+  }
+
+  const groups = new Map();
+  for (const n of filtered) {
+    const key = groupKey(n);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(n);
+  }
+  for (const [key, notes] of [...groups].sort((a, b) => groupLabel(a[0]).localeCompare(groupLabel(b[0]), 'es'))) {
+    // al buscar se abren los grupos con resultados, sin tocar lo que se recuerda
+    const isCollapsed = collapsed.has(key) && !searching;
+    const body = el('div', { class: 'group-body' }, ...sortNotes(notes).map((n) => noteCard(n, cardOptions(n))));
+    const head = el('button', { type: 'button', class: 'sec-head', 'aria-expanded': String(!isCollapsed) },
+      el('span', { class: 'chev', 'aria-hidden': 'true' }, '▾'), groupLabel(key), el('span', { class: 'group-count' }, ' (' + notes.length + ')'));
+    head.addEventListener('click', () => {
+      if (collapsed.has(key)) collapsed.delete(key); else collapsed.add(key);
+      savePrefs();
+      render();
+    });
+    list.append(el('section', { class: 'group-sec' + (isCollapsed ? ' collapsed' : '') }, head, body));
   }
 }
+
+$('#pView').addEventListener('change', (e) => { prefs.view = e.target.value; viewOverride.clear(); savePrefs(); render(); });
+$('#pSort').addEventListener('change', (e) => { prefs.sort = e.target.value; savePrefs(); render(); });
+$('#pGroup').addEventListener('change', (e) => { prefs.group = e.target.value; savePrefs(); render(); });
+$('#collapseAll').addEventListener('click', () => {
+  for (const n of NotesStore.filter(all, { q: $('#search').value, tag: $('#fTag').value, color: $('#fColor').value, scope: $('#fScope').value, profile: multi() ? $('#fProfile').value : '' })) collapsed.add(groupKey(n));
+  savePrefs();
+  render();
+});
+$('#expandAll').addEventListener('click', () => { collapsed.clear(); savePrefs(); render(); });
 
 async function openInProfile(note) {
   try {
@@ -143,9 +234,14 @@ $('#search').addEventListener('input', render);
 for (const id of ['#fColor', '#fTag', '#fScope', '#fProfile']) $(id).addEventListener('change', render);
 
 // Se refresca solo cuando cambian los datos, incluso si vienen de otro dispositivo
+let reloadTimer = null;
+function scheduleLoad() {
+  clearTimeout(reloadTimer);
+  reloadTimer = setTimeout(() => (menuIsOpen() ? scheduleLoad() : load()), 150);
+}
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'session') Link.paintStatus($('#conn'), () => openPage('options.html'));
-  else load();
+  scheduleLoad();
 });
 
 load();

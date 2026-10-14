@@ -126,21 +126,78 @@ const Link = (() => {
     connecting: 'Conectando con la app…',
     offline: 'Sin conexión con la app: los cambios se guardan y se enviarán al volver',
     revoked: 'La app ya no reconoce esta extensión: vuelve a conectarla en Ajustes',
+    noprofile: 'Falta elegir el perfil de este navegador en Ajustes',
     unpaired: 'No conectada a la app',
     unknown: '',
   };
 
-  // Pinta la línea de estado (botón #conn) en el popup y en la página completa. Solo se ve si hay enlace y no está todo bien.
-  async function paintStatus(button, onClick) {
-    const link = await get();
-    const c = await conn();
-    const bad = !!link && c.state !== 'online' && c.state !== 'unknown';
-    button.hidden = !bad;
-    if (!bad) return;
-    button.textContent = '● ' + (STATE_TEXT[c.state] || '');
-    button.classList.toggle('bad', c.state === 'revoked');
-    button.onclick = c.state === 'offline' ? () => { try { chrome.runtime.sendMessage({ type: 'link:retry' }); } catch { /* sin service worker */ } } : onClick;
+  async function cloudState() {
+    try {
+      const { cloud } = await chrome.storage.session.get('cloud');
+      return cloud || null;
+    } catch {
+      return null;
+    }
   }
 
-  return { paintStatus, BASE, WS_URL, PORT, browserKind, browserLabel, get, save, request, pair, profiles, conn, openNote, restart, unlink, STATE_TEXT };
+  async function pendingIds() {
+    const { outbox } = await chrome.storage.local.get('outbox');
+    return new Set(Object.keys((outbox && outbox.notes) || {}));
+  }
+
+  // Resumen del estado para mostrar: { level: ok | warn | bad | off, text, action }
+  async function statusInfo() {
+    const link = await get();
+    if (!link) return { level: 'off', text: 'Sin emparejar con la app', action: 'options' };
+    const c = await conn();
+    const pending = (await pendingIds()).size;
+    const toApp = pending ? ` · ${pending} sin enviar a la app` : '';
+    switch (c.state) {
+      case 'offline':
+        return { level: 'bad', text: 'App cerrada o sin conexión: tus cambios se guardan aquí' + toApp, action: 'retry' };
+      case 'revoked':
+        return { level: 'bad', text: STATE_TEXT.revoked, action: 'options' };
+      case 'noprofile':
+        return { level: 'warn', text: STATE_TEXT.noprofile, action: 'options' };
+      case 'online': {
+        const cloud = await cloudState();
+        if (!cloud || cloud.state === 'disabled') return { level: 'ok', text: 'Conectada a la app · nube sin configurar' + toApp };
+        if (cloud.state === 'offline') return { level: 'warn', text: 'App conectada, sin internet' + (cloud.pending ? ` · ${cloud.pending} sin subir a la nube` : '') + toApp };
+        if (cloud.state === 'connecting') return { level: 'warn', text: 'App conectada · conectando con la nube…' + toApp };
+        if (cloud.pending || pending) return { level: 'warn', text: 'Guardando…' + (cloud.pending ? ` ${cloud.pending} cambio(s) subiendo a la nube` : '') + toApp };
+        return { level: 'ok', text: 'Todo a salvo en la nube' };
+      }
+      default:
+        return { level: 'warn', text: STATE_TEXT.connecting };
+    }
+  }
+
+  // Estado de seguridad de una nota: null (a salvo o no aplica), 'app' (sin enviar a la app) o 'cloud' (sin subir a la nube)
+  function noteSafety(note, ctx) {
+    if (!ctx || !ctx.linked) return null;
+    if (ctx.pending.has(note.id)) return 'app';
+    const cloud = ctx.cloud;
+    if (cloud && cloud.state !== 'disabled' && typeof note.seq === 'number' && note.seq > cloud.syncedSeq) return 'cloud';
+    return null;
+  }
+
+  async function safetyContext() {
+    const link = await get();
+    return { linked: !!link, pending: await pendingIds(), cloud: await cloudState() };
+  }
+
+  // Pinta la línea de estado (botón #conn). Siempre visible: dice si hay app, nube o nada.
+  async function paintStatus(button, onOptions) {
+    const info = await statusInfo();
+    button.hidden = false;
+    button.textContent = '● ' + info.text;
+    button.dataset.level = info.level;
+    button.title = info.action === 'retry' ? 'Pulsa para reintentar la conexión' : info.action === 'options' ? 'Abrir Ajustes' : '';
+    button.onclick = info.action === 'retry'
+      ? () => { try { chrome.runtime.sendMessage({ type: 'link:retry' }); } catch { /* sin service worker */ } }
+      : info.action === 'options' ? onOptions : null;
+    button.style.cursor = info.action ? 'pointer' : 'default';
+  }
+
+  return { paintStatus, statusInfo, noteSafety, safetyContext, BASE, WS_URL, PORT, browserKind, browserLabel, get, save, request, pair, profiles, conn, openNote, restart, unlink, STATE_TEXT };
 })();

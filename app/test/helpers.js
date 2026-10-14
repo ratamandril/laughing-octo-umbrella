@@ -78,11 +78,19 @@ function request(port, { method = 'GET', path: urlPath = '/', headers = {}, body
 }
 
 // Genera un código en la app y empareja una "extensión". Devuelve { token, instanceId }.
-async function pair(ctx, { origin = ORIGIN_A, browser = 'chrome', label = 'prueba' } = {}) {
+// Por defecto la extensión queda asignada al perfil "Default" de Chrome (así varias comparten perfil y se ven entre sí).
+// Con profile: null se queda sin perfil asignado.
+async function pair(ctx, { origin = ORIGIN_A, browser = 'chrome', label = 'prueba', profile = { browser: 'chrome', dir: 'Default' } } = {}) {
   const { code } = ctx.core.newPairingCode();
   const res = await request(ctx.port, { method: 'POST', path: '/pair', origin, body: { code, browser, label } });
   if (res.status !== 201) throw new Error(`pair falló: ${res.status} ${res.text}`);
-  return { token: res.json.token, instanceId: res.json.instanceId, origin };
+  const out = { token: res.json.token, instanceId: res.json.instanceId, origin, profileId: null };
+  if (profile) {
+    const set = await request(ctx.port, { method: 'PUT', path: '/me/profile', origin, token: out.token, body: profile });
+    if (set.status !== 200) throw new Error(`perfil falló: ${set.status} ${set.text}`);
+    out.profileId = set.json.profile.id;
+  }
+  return out;
 }
 
 // Cliente WebSocket que acumula mensajes y permite esperar a uno concreto

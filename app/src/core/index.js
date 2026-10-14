@@ -16,6 +16,7 @@ const { createFirestoreRemote, validateServiceAccount } = require('./sync/firest
 const path = require('node:path');
 
 const DEFAULT_PORT = 47321;
+const TRASH_DAYS = 30;
 const version = require('../../package.json').version;
 
 function createCore(options = {}) {
@@ -70,11 +71,15 @@ function createCore(options = {}) {
     }
     const engine = new SyncEngine({ dir: dataDir, store, registry, remote, onError, ...(options.syncOptions || {}) });
     if (problem) engine.status.lastError = problem;
-    engine.on('status', notify);
+    engine.on('status', (st) => {
+      server.setCloud(st);
+      notify();
+    });
+    server.setCloud(engine.getStatus());
     engine.on('applied', ({ notes, palette, profiles }) => {
       server.broadcastNotes(notes);
       if (palette) server.broadcastPalette(palette);
-      if (profiles) server.broadcastProfiles(registry.listProfiles());
+      if (profiles) server.broadcastProfiles();
       notify();
     });
     return engine;
@@ -84,6 +89,15 @@ function createCore(options = {}) {
   server.on('change', notify);
   auth.on('change', notify);
   server.on('error-internal', (err) => events.emit('error-internal', err));
+
+  // ----- papelera -----
+  const changed = () => server.emit('change');
+  const purgeExpired = () => {
+    const gone = store.purgeExpired(TRASH_DAYS * 24 * 3600 * 1000);
+    if (gone.length) changed();
+    return gone.length;
+  };
+  let purgeTimer = null;
 
   // Foto del estado para la interfaz
   async function state() {
@@ -108,6 +122,8 @@ function createCore(options = {}) {
       registeredProfiles: registry.listProfiles(),
       loadWarnings: store.loadWarnings,
       sync: sync.getStatus(),
+      trashCount: store.listTrash().length,
+      trashDays: TRASH_DAYS,
     };
   }
 
@@ -123,12 +139,71 @@ function createCore(options = {}) {
     get sync() {
       return sync;
     },
+    // ----- permisos entre perfiles -----
+    setCanSee(instanceId, profileIds) {
+      const ids = Array.isArray(profileIds) ? profileIds.map(String) : [];
+      if (!registry.setInstanceCanSee(instanceId, ids)) return false;
+      server.broadcastProfiles();
+      server.notifyAccess(instanceId); // la extensión se resincroniza con lo que ahora puede ver
+      changed();
+      return true;
+    },
+    // Abre la nota en su navegador y perfil (desde la propia app)
+    openNote: (id) => server.openTarget({ noteId: String(id) }),
+
+    // Todas las notas vivas (vista global de la app)
+    notesView() {
+      const notes = [...store.notes.values()]
+        .filter((n) => !n.deleted)
+        .map((n) => ({ id: n.id, title: n.title, description: n.description, url: n.url, host: n.host, scope: n.scope, tags: n.tags, color: n.color, profileId: n.profileId, createdAt: n.createdAt, updatedAt: n.updatedAt }))
+        .sort((a, b) => b.updatedAt - a.updatedAt);
+      const palette = store.getPalette();
+      return { notes, palette: palette ? palette.list : [], profiles: registry.listProfiles() };
+    },
+    noteUrl: (id) => {
+      const note = store.get(String(id));
+      return note && !note.deleted ? note.url : null;
+    },
+
+    // ----- notas desde la app -----
+    trash: () => store.listTrash(),
+    deleteNote(id) {
+      const note = store.remove(String(id));
+      if (note) {
+        server.broadcastNotes([note]);
+        changed();
+      }
+      return note;
+    },
+    restoreNote(id) {
+      const note = store.restore(String(id));
+      if (note) {
+        server.broadcastNotes([note]);
+        changed();
+      }
+      return note;
+    },
+    purgeNote(id) {
+      const note = store.purge(String(id));
+      if (note) changed();
+      return note;
+    },
+    emptyTrash() {
+      const gone = store.emptyTrash();
+      if (gone.length) changed();
+      return gone.length;
+    },
+    purgeExpired,
     async start() {
       const port = await server.start();
+      purgeExpired();
+      purgeTimer = setInterval(purgeExpired, 6 * 3600 * 1000);
+      if (purgeTimer.unref) purgeTimer.unref();
       sync.start().catch((err) => events.emit('error-internal', err)); // no bloquea el arranque si no hay internet
       return port;
     },
     async stop() {
+      clearInterval(purgeTimer);
       await sync.stop();
       await server.stop();
     },
@@ -162,7 +237,7 @@ function createCore(options = {}) {
       const profile = registry.renameProfile(id, String(name).trim().slice(0, 60));
       if (profile) {
         await registry.flush();
-        server._broadcast({ type: 'profiles', profiles: registry.listProfiles() });
+        server.broadcastProfiles();
         notify();
       }
       return profile;

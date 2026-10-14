@@ -88,19 +88,61 @@ describe('store', () => {
     assert.equal(a2.createdAt, a.createdAt);
   });
 
-  test('remove deja un tombstone sin contenido y since lo reporta solo a quien ya tiene datos', () => {
+  test('remove manda a la papelera conservando el contenido; since lo reporta solo a quien ya tiene datos', () => {
     const store = mk(tmpDir(), () => 5000);
     store.put(input('a', { description: 'secreto', tags: ['t'] }));
     const afterPut = store.seq;
     const gone = store.remove('a');
     assert.equal(gone.deleted, true);
-    assert.equal(gone.description, '');
-    assert.deepEqual(gone.tags, []);
+    assert.equal(gone.purged, false);
+    assert.equal(gone.description, 'secreto');
+    assert.deepEqual(gone.tags, ['t']);
+    assert.equal(gone.deletedAt, 5000);
     assert.equal(store.count(), 0);
     assert.equal(store.since(0).length, 0);
     assert.equal(store.since(afterPut).length, 1);
+    assert.equal(store.listTrash().length, 1);
     assert.equal(store.remove('a'), null);
     assert.equal(store.remove('zzz'), null);
+  });
+
+  test('papelera: restaurar, purgar, vaciar y caducar', () => {
+    let t = 1000;
+    const store = mk(tmpDir(), () => t);
+    for (const id of ['a', 'b', 'c', 'd']) store.put(input(id, { description: 'd-' + id }));
+    for (const id of ['a', 'b', 'c']) store.remove(id);
+    const back = store.restore('a');
+    assert.equal(back.deleted, false);
+    assert.equal(back.deletedAt, null);
+    assert.equal(back.description, 'd-a');
+    assert.equal(store.count(), 2);
+    assert.equal(store.restore('d'), null); // no está en la papelera
+
+    const purged = store.purge('b');
+    assert.equal(purged.purged, true);
+    assert.equal(purged.title, '');
+    assert.equal(purged.description, '');
+    assert.equal(store.restore('b'), null); // ya no se puede recuperar
+    assert.equal(store.listTrash().length, 1);
+
+    t += 40 * 24 * 3600 * 1000;
+    assert.equal(store.purgeExpired(30 * 24 * 3600 * 1000).length, 1);
+    assert.equal(store.listTrash().length, 0);
+    store.remove('d');
+    assert.equal(store.emptyTrash().length, 1);
+  });
+
+  test('un marcador antiguo en blanco se lee como purgado y la papelera sobrevive a recargar', async () => {
+    const dir = tmpDir();
+    const s1 = mk(dir, () => 5000);
+    s1.put(input('keep', { description: 'x' }));
+    s1.remove('keep');
+    await s1.flush();
+    fs.writeFileSync(path.join(dir, 'notes.json'), JSON.stringify({ ...JSON.parse(fs.readFileSync(path.join(dir, 'notes.json'), 'utf8')), notes: { ...JSON.parse(fs.readFileSync(path.join(dir, 'notes.json'), 'utf8')).notes, old: { id: 'old', url: 'https://a.com', title: '', description: '', deleted: true, seq: 1, updatedAt: 10 } } }));
+    const s2 = mk(dir, () => 5000);
+    assert.equal(s2.get('old').purged, true);
+    assert.equal(s2.listTrash().length, 1);
+    assert.equal(s2.listTrash()[0].description, 'x');
   });
 
   test('PUT revive una nota borrada, pero no permite deleted:true', () => {

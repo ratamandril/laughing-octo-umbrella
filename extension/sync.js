@@ -28,6 +28,13 @@ const Sync = (() => {
     } catch { /* storage.session no disponible */ }
   }
 
+  async function setCloud(cloud) {
+    if (!cloud || typeof cloud !== 'object') return;
+    try {
+      await chrome.storage.session.set({ cloud: { state: cloud.state, pending: cloud.pending || 0, syncedSeq: cloud.syncedSeq || 0 } });
+    } catch { /* storage.session no disponible */ }
+  }
+
   const clean = (note) => ({ ...note }); // la nota del servidor ya viene saneada
 
   // ---------- aplicar lo que llega de la app ----------
@@ -91,6 +98,12 @@ const Sync = (() => {
       const me = await Link.request('/me');
       if (gen !== generation) return;
       await Link.save({ ...link, profileId: me.profile ? me.profile.id : null });
+      if (!me.profile) {
+        // Sin perfil la app no entrega notas: se espera a que se elija en Ajustes
+        running = false;
+        await setConn('noprofile');
+        return;
+      }
 
       const { syncSeq = 0 } = await local.get('syncSeq');
       const changes = await Link.request('/notes?since=' + syncSeq);
@@ -175,6 +188,7 @@ const Sync = (() => {
               const link2 = await Link.get();
               if (link2 && link2.profileId !== msg.profile.id) await Link.save({ ...link2, profileId: msg.profile.id });
             }
+            await setCloud(msg.cloud);
             await setConn('online');
             pingTimer = setInterval(ping, PING_MS);
             flush();
@@ -187,6 +201,12 @@ const Sync = (() => {
             await applyPalette(msg.palette);
           } else if (msg.type === 'profiles') {
             await storeProfiles(msg.profiles);
+          } else if (msg.type === 'status') {
+            await setCloud(msg.cloud);
+          } else if (msg.type === 'access') {
+            // Cambió lo que esta extensión puede ver: se vuelve a sincronizar desde cero
+            await local.set({ syncSeq: 0 });
+            restart();
           } else if (msg.type === 'pong') {
             lastPong = Date.now();
           }

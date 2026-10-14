@@ -63,6 +63,29 @@ function renderInstances(instances) {
     });
     row.append(dot, info, revoke);
     list.append(row);
+
+    // Permiso para ver notas de otros perfiles (por defecto, ninguno)
+    const others = (current ? current.registeredProfiles : []).filter((p) => p.id !== instance.profileId);
+    if (instance.profileId && others.length) {
+      const access = el('div', 'access');
+      access.append(el('span', '', 'Puede ver también las notas de:'));
+      for (const other of others) {
+        const label = el('label');
+        const box = document.createElement('input');
+        box.type = 'checkbox';
+        box.checked = (instance.canSee || []).includes(other.id);
+        box.addEventListener('change', async () => {
+          const ids = [...access.querySelectorAll('input')].filter((i) => i.checked).map((i) => i.dataset.id);
+          await window.notasApp.setAccess(instance.id, ids);
+        });
+        box.dataset.id = other.id;
+        label.append(box, el('span', '', `${BROWSER_NAMES[other.browser] || other.browser} · ${other.name}`));
+        access.append(label);
+      }
+      list.append(access);
+    } else if (!instance.profileId) {
+      list.append(el('div', 'access', 'Hasta que elija su perfil, esta extensión no recibe notas.'));
+    }
   }
 }
 
@@ -105,6 +128,29 @@ function renderSync(sync) {
   error.textContent = message;
 }
 
+function renderCloud(sync) {
+  const pill = $('#cloud');
+  pill.hidden = false;
+  let text = 'Nube sin configurar';
+  let cls = 'pill';
+  if (sync.state === 'online') {
+    text = sync.pending ? `Nube: subiendo ${sync.pending}…` : 'Nube al día';
+    cls = sync.pending ? 'pill warn' : 'pill on';
+  } else if (sync.state === 'offline') {
+    text = sync.pending ? `Sin internet · ${sync.pending} sin subir` : 'Sin conexión con la nube';
+    cls = 'pill bad';
+  } else if (sync.state === 'connecting') {
+    text = 'Conectando con la nube…';
+  }
+  pill.textContent = text;
+  pill.className = cls;
+}
+
+function renderSummary(state) {
+  const warnings = state.loadWarnings.length ? ` · ${state.loadWarnings.length} nota(s) descartadas al cargar` : '';
+  $('#summary').textContent = `${state.notes} nota(s) · cambio nº ${state.seq}${warnings}`;
+}
+
 function render(state) {
   current = state;
   const status = $('#status');
@@ -114,9 +160,206 @@ function render(state) {
   renderInstances(state.instances);
   renderProfiles(state.detectedProfiles, state.registeredProfiles);
   renderSync(state.sync);
-  const warnings = state.loadWarnings.length ? ` · ${state.loadWarnings.length} nota(s) descartadas al cargar` : '';
-  $('#summary').textContent = `${state.notes} nota(s) · cambio nº ${state.seq}${warnings}`;
+  renderCloud(state.sync);
+  const badge = $('#trashBadge');
+  badge.hidden = !state.trashCount;
+  badge.textContent = state.trashCount;
+  if (activeTab === 'notas') scheduleNotes();
+  if (activeTab === 'papelera') renderTrash(state);
+  renderSummary(state);
 }
+
+// ---------- pestañas ----------
+let activeTab = 'conexion';
+function showTab(name) {
+  activeTab = name;
+  for (const button of document.querySelectorAll('.tab-btn')) {
+    const on = button.dataset.tab === name;
+    button.classList.toggle('active', on);
+    button.setAttribute('aria-selected', String(on));
+  }
+  for (const panel of document.querySelectorAll('.tab')) panel.hidden = panel.id !== 'tab-' + name;
+  if (name === 'notas') loadNotes();
+  if (name === 'papelera') renderTrash(current);
+}
+for (const button of document.querySelectorAll('.tab-btn')) button.addEventListener('click', () => showTab(button.dataset.tab));
+
+// ---------- notas de todos los perfiles ----------
+let notesData = { notes: [], palette: [], profiles: [] };
+const collapsed = new Set(JSON.parse(localStorage.getItem('collapsedHosts') || '[]'));
+let notesTimer = null;
+
+function profileName(id) {
+  const p = notesData.profiles.find((x) => x.id === id);
+  return p ? `${BROWSER_NAMES[p.browser] || p.browser} · ${p.name}` : 'Sin perfil';
+}
+
+function scheduleNotes() {
+  clearTimeout(notesTimer);
+  notesTimer = setTimeout(loadNotes, 300);
+}
+
+async function loadNotes() {
+  notesData = await window.notasApp.listNotes();
+  fillNoteFilters();
+  renderNotes();
+}
+
+function fillNoteFilters() {
+  const fp = $('#fProfile');
+  const curP = fp.value;
+  fp.replaceChildren(new Option('Todos los perfiles', ''), ...notesData.profiles.map((p) => new Option(profileName(p.id), p.id)), new Option('Sin perfil', 'none'));
+  fp.value = [...fp.options].some((o) => o.value === curP) ? curP : '';
+  const ft = $('#fTag');
+  const curT = ft.value;
+  const tags = new Map();
+  for (const n of notesData.notes) for (const t of n.tags) tags.set(t, (tags.get(t) || 0) + 1);
+  ft.replaceChildren(new Option('Todas las etiquetas', ''), ...[...tags].sort((a, b) => b[1] - a[1]).map(([t, c]) => new Option(`#${t} (${c})`, t)));
+  ft.value = tags.has(curT) ? curT : '';
+}
+
+function noteMatches(n) {
+  const q = $('#q').value.trim().toLowerCase();
+  const prof = $('#fProfile').value;
+  const tag = $('#fTag').value;
+  if (prof && (prof === 'none' ? n.profileId : n.profileId !== prof)) return false;
+  if (tag && !n.tags.includes(tag)) return false;
+  return !q || [n.title, n.description, n.url, ...n.tags].some((t) => (t || '').toLowerCase().includes(q));
+}
+
+function saveCollapsed() {
+  localStorage.setItem('collapsedHosts', JSON.stringify([...collapsed]));
+}
+
+function renderNotes() {
+  const filtered = notesData.notes.filter(noteMatches);
+  const searching = !!$('#q').value.trim();
+  $('#notesCount').textContent = `${filtered.length} de ${notesData.notes.length} notas`;
+  $('#noNotes').hidden = filtered.length > 0;
+
+  const groups = new Map();
+  for (const n of filtered) {
+    if (!groups.has(n.host)) groups.set(n.host, []);
+    groups.get(n.host).push(n);
+  }
+  const list = $('#notesList');
+  list.replaceChildren();
+  for (const [host, notes] of [...groups].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const isCollapsed = collapsed.has(host) && !searching; // al buscar se abren los grupos con resultados
+    const group = el('section', 'group' + (isCollapsed ? ' collapsed' : ''));
+    const head = el('button', 'group-head');
+    head.setAttribute('aria-expanded', String(!isCollapsed));
+    head.append(el('span', 'chev', '▾'), el('span', '', host), el('span', 'muted', `(${notes.length})`));
+    head.addEventListener('click', () => {
+      if (collapsed.has(host)) collapsed.delete(host); else collapsed.add(host);
+      saveCollapsed();
+      renderNotes();
+    });
+    const body = el('div', 'group-body');
+    for (const n of notes) body.append(noteRow(n));
+    group.append(head, body);
+    list.append(group);
+  }
+}
+
+function noteRow(n) {
+  const cat = notesData.palette.find((c) => c.id === n.color);
+  const row = el('article', 'nrow');
+  if (cat) row.style.borderLeftColor = cat.hex;
+  row.append(el('div', 't', n.title));
+  if (n.description) row.append(el('div', 'd', n.description.length > 300 ? n.description.slice(0, 300) + '…' : n.description));
+  const meta = el('div', 'meta');
+  meta.append(el('span', '', profileName(n.profileId)), el('span', '', n.scope === 'domain' ? 'Todo el sitio' : 'Página'));
+  if (cat) meta.append(el('span', '', cat.name));
+  for (const t of n.tags) meta.append(el('span', '', '#' + t));
+  meta.append(el('span', '', new Date(n.updatedAt).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' })));
+
+  const acts = el('span', 'acts');
+  const open = el('button', 'link', 'Abrir en su perfil');
+  open.disabled = !n.profileId;
+  open.addEventListener('click', async () => {
+    const res = await window.notasApp.openNote(n.id);
+    flash(res.ok ? 'Abriendo…' : openError(res.error), !res.ok);
+  });
+  const copy = el('button', 'link', 'Copiar URL');
+  copy.addEventListener('click', async () => flash((await window.notasApp.copyNoteUrl(n.id)) ? 'URL copiada.' : 'No se pudo copiar.'));
+  const del = el('button', 'danger', 'A la papelera');
+  del.addEventListener('click', async () => {
+    await window.notasApp.deleteNote(n.id);
+    loadNotes();
+  });
+  acts.append(open, copy, del);
+  meta.append(acts);
+  row.append(meta);
+  return row;
+}
+
+const OPEN_ERRORS = {
+  profile_missing: 'Ese perfil ya no existe en el equipo.',
+  browser_not_found: 'No se encontró el navegador de ese perfil.',
+  no_profile: 'La nota no tiene un perfil asignado.',
+  unknown_profile: 'La app no conoce el perfil de esa nota.',
+  too_many_opens: 'Demasiadas aperturas seguidas. Espera un momento.',
+};
+const openError = (code) => OPEN_ERRORS[code] || `No se pudo abrir (${code}).`;
+
+let flashTimer = null;
+function flash(text, bad = false) {
+  const box = $('#summary');
+  box.textContent = text;
+  box.classList.toggle('err', bad);
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => { box.classList.remove('err'); if (current) renderSummary(current); }, 3500);
+}
+
+for (const id of ['#q', '#fProfile', '#fTag']) $(id).addEventListener('input', renderNotes);
+$('#collapseAll').addEventListener('click', () => {
+  for (const n of notesData.notes) collapsed.add(n.host);
+  saveCollapsed();
+  renderNotes();
+});
+$('#expandAll').addEventListener('click', () => {
+  collapsed.clear();
+  saveCollapsed();
+  renderNotes();
+});
+
+// ---------- papelera ----------
+async function renderTrash(state) {
+  const items = await window.notasApp.listTrash();
+  $('#trashInfo').textContent = `Las notas borradas se conservan ${state ? state.trashDays : 30} días y luego se eliminan para siempre. Las extensiones no ven su contenido.`;
+  $('#noTrash').hidden = items.length > 0;
+  $('#emptyTrash').hidden = items.length === 0;
+  const list = $('#trashList');
+  list.replaceChildren();
+  for (const n of items) {
+    const row = el('article', 'nrow');
+    row.append(el('div', 't', n.title));
+    if (n.description) row.append(el('div', 'd', n.description.length > 200 ? n.description.slice(0, 200) + '…' : n.description));
+    const meta = el('div', 'meta');
+    meta.append(el('span', '', n.host), el('span', '', `Borrada ${new Date(n.deletedAt).toLocaleDateString('es-PE', { day: '2-digit', month: 'short' })}`));
+    const acts = el('span', 'acts');
+    const restore = el('button', 'link', 'Restaurar');
+    restore.addEventListener('click', async () => { await window.notasApp.restoreNote(n.id); refresh(); });
+    const purge = el('button', 'danger', 'Eliminar para siempre');
+    purge.addEventListener('click', async () => {
+      if (window.confirm(`¿Eliminar "${n.title}" para siempre? No se podrá recuperar.`)) {
+        await window.notasApp.purgeNote(n.id);
+        refresh();
+      }
+    });
+    acts.append(restore, purge);
+    meta.append(acts);
+    row.append(meta);
+    list.append(row);
+  }
+}
+$('#emptyTrash').addEventListener('click', async () => {
+  if (window.confirm('¿Vaciar la papelera? Las notas se eliminarán para siempre.')) {
+    await window.notasApp.emptyTrash();
+    refresh();
+  }
+});
 
 async function refresh() {
   render(await window.notasApp.getState());

@@ -99,32 +99,82 @@ class Store {
       deleted: allowDeleted ? note.deleted : false,
       seq: ++this.seq,
     };
-    if (stored.deleted) {
-      stored.title = '';
-      stored.description = '';
-      stored.tags = [];
+    if (!stored.deleted) {
+      stored.deletedAt = null;
+      stored.purged = false;
     }
     this.notes.set(stored.id, stored);
     this.file.markDirty();
     return { note: stored, created: !prev || prev.deleted };
   }
 
-  // Borra dejando un tombstone sin contenido. Devuelve la nota o null si no existía.
+  // Manda a la papelera: la nota queda marcada como borrada pero conserva su contenido.
+  // Devuelve la nota o null si no existía.
   remove(id) {
     const prev = this.notes.get(id);
     if (!prev || prev.deleted) return null;
+    const t = this.now();
     const stored = {
       ...prev,
-      title: '',
-      description: '',
-      tags: [],
       deleted: true,
+      deletedAt: t,
+      purged: false,
+      updatedAt: Math.max(t, prev.updatedAt + 1),
+      seq: ++this.seq,
+    };
+    this.notes.set(id, stored);
+    this.file.markDirty();
+    return stored;
+  }
+
+  // Papelera: notas borradas que aún conservan su contenido, las más recientes primero
+  listTrash() {
+    return [...this.notes.values()].filter((n) => n.deleted && !n.purged).sort((a, b) => (b.deletedAt || 0) - (a.deletedAt || 0));
+  }
+
+  // Saca una nota de la papelera. Devuelve la nota restaurada o null.
+  restore(id) {
+    const prev = this.notes.get(id);
+    if (!prev || !prev.deleted || prev.purged) return null;
+    const stored = {
+      ...prev,
+      deleted: false,
+      deletedAt: null,
+      purged: false,
       updatedAt: Math.max(this.now(), prev.updatedAt + 1),
       seq: ++this.seq,
     };
     this.notes.set(id, stored);
     this.file.markDirty();
     return stored;
+  }
+
+  // Elimina el contenido para siempre; queda el marcador para que el borrado se propague.
+  purge(id) {
+    const prev = this.notes.get(id);
+    if (!prev || !prev.deleted || prev.purged) return null;
+    const stored = {
+      ...prev,
+      title: '',
+      description: '',
+      tags: [],
+      purged: true,
+      updatedAt: Math.max(this.now(), prev.updatedAt + 1),
+      seq: ++this.seq,
+    };
+    this.notes.set(id, stored);
+    this.file.markDirty();
+    return stored;
+  }
+
+  emptyTrash() {
+    return this.listTrash().map((n) => this.purge(n.id));
+  }
+
+  // Purga lo que lleva más de maxAgeMs en la papelera
+  purgeExpired(maxAgeMs) {
+    const limit = this.now() - maxAgeMs;
+    return this.listTrash().filter((n) => (n.deletedAt || 0) < limit).map((n) => this.purge(n.id));
   }
 
   getPalette() {

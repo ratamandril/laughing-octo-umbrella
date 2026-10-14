@@ -35,6 +35,13 @@ class HttpError extends Error {
 
 const ok = (body, status = 200) => ({ status, body });
 
+// Lo que ven las extensiones: una nota borrada nunca lleva su contenido (eso queda en la papelera de la app)
+function publicNote(note) {
+  if (!note || !note.deleted) return note;
+  const { deletedAt, purged, ...rest } = note; // eslint-disable-line no-unused-vars
+  return { ...rest, title: '', description: '', tags: [] };
+}
+
 function bearer(header) {
   const match = /^Bearer\s+(\S+)$/i.exec(header || '');
   return match ? match[1] : null;
@@ -79,6 +86,8 @@ class NotesServer extends EventEmitter {
     this.clients = new Set();
     this.lastSeen = new Map();
     this.openLog = [];
+    this.cloud = { state: 'disabled', pending: 0, syncedSeq: 0 };
+    this.cloudTimer = null;
     this.keepAlive = null;
 
     this.http = http.createServer((req, res) => {
@@ -99,7 +108,7 @@ class NotesServer extends EventEmitter {
       route('POST', /^\/pair$/, false, (ctx) => this._pair(ctx), 1024),
       route('GET', /^\/me$/, true, (ctx) => this._me(ctx)),
       route('DELETE', /^\/me$/, true, (ctx) => this._unpair(ctx)),
-      route('GET', /^\/profiles$/, true, () => this._profiles()),
+      route('GET', /^\/profiles$/, true, (ctx) => this._profiles(ctx)),
       route('PUT', /^\/me\/profile$/, true, (ctx) => this._setProfile(ctx)),
       route('PATCH', /^\/profiles\/([\w-]{1,64})$/, true, (ctx) => this._renameProfile(ctx)),
       route('GET', /^\/notes$/, true, (ctx) => this._listNotes(ctx)),
@@ -128,6 +137,7 @@ class NotesServer extends EventEmitter {
 
   async stop() {
     if (this.keepAlive) clearInterval(this.keepAlive);
+    clearTimeout(this.cloudTimer);
     for (const ws of this.clients) ws.close(1001, 'server_stopping');
     await new Promise((resolve) => {
       this.http.close(() => resolve());
@@ -137,23 +147,70 @@ class NotesServer extends EventEmitter {
     await this.registry.flush().catch(() => {});
   }
 
+  // Estado de la copia en la nube: se informa a las extensiones para que muestren si todo está a salvo
+  setCloud(status) {
+    const next = { state: status.state, pending: status.pending, syncedSeq: status.syncedSeq || 0 };
+    if (JSON.stringify(next) === JSON.stringify(this.cloud)) return;
+    this.cloud = next;
+    clearTimeout(this.cloudTimer);
+    this.cloudTimer = setTimeout(() => this._broadcast({ type: 'status', cloud: this.cloud }), 250);
+    if (this.cloudTimer.unref) this.cloudTimer.unref();
+  }
+
   // Para cambios que no vienen de una extensión (p. ej. Firestore): se avisa a todas
-  broadcastNotes(notes) {
-    if (notes.length) this._broadcast({ type: 'notes', notes, seq: this.store.seq });
+  broadcastNotes(notes, exceptInstanceId = null) {
+    if (!notes.length) return;
+    for (const ws of this.clients) {
+      if (!ws.instanceId || ws.instanceId === exceptInstanceId || ws.readyState !== 1) continue;
+      const instance = this.registry.getInstance(ws.instanceId);
+      const visible = notes.filter((n) => this._canSee(instance, n)).map(publicNote);
+      if (visible.length) this._sendBuffered(ws, JSON.stringify({ type: 'notes', notes: visible, seq: this.store.seq }));
+    }
   }
 
   broadcastPalette(palette) {
     this._broadcast({ type: 'palette', palette });
   }
 
-  broadcastProfiles(profiles) {
-    this._broadcast({ type: 'profiles', profiles });
+  broadcastProfiles() {
+    for (const ws of this.clients) {
+      if (!ws.instanceId || ws.readyState !== 1) continue;
+      const instance = this.registry.getInstance(ws.instanceId);
+      this._sendJson(ws, { type: 'profiles', profiles: this._visibleProfileList(instance) });
+    }
   }
 
   onlineInstanceIds() {
     const ids = new Set();
     for (const ws of this.clients) if (ws.instanceId) ids.add(ws.instanceId);
     return ids;
+  }
+
+  // ---------- visibilidad: cada extensión ve su perfil y los que se le permitan desde la app ----------
+  _visibleProfiles(instance) {
+    const set = new Set();
+    if (!instance || !instance.profileId) return set;
+    set.add(instance.profileId);
+    for (const id of instance.canSee || []) if (this.registry.getProfile(id)) set.add(id);
+    return set;
+  }
+
+  _canSee(instance, note) {
+    return !!note && !!note.profileId && this._visibleProfiles(instance).has(note.profileId);
+  }
+
+  _requireProfile(instance) {
+    if (!instance.profileId) throw new HttpError(409, 'profile_required');
+  }
+
+  _visibleProfileList(instance) {
+    const set = this._visibleProfiles(instance);
+    return this.registry.listProfiles().filter((p) => set.has(p.id));
+  }
+
+  // Avisa a una extensión de que cambió lo que puede ver: vuelve a sincronizar desde cero
+  notifyAccess(instanceId) {
+    for (const ws of this.clients) if (ws.instanceId === instanceId) this._sendJson(ws, { type: 'access' });
   }
 
   // ---------- comprobaciones comunes ----------
@@ -298,6 +355,7 @@ class NotesServer extends EventEmitter {
       browser: instance.browser,
       label: instance.label,
       profile: this.registry.getProfile(instance.profileId),
+      canSee: instance.canSee || [],
       seq: this.store.seq,
       protocol: PROTOCOL,
     });
@@ -310,8 +368,8 @@ class NotesServer extends EventEmitter {
     return ok({ ok: true });
   }
 
-  async _profiles() {
-    return ok({ detected: await this.profiles.detect(), registered: this.registry.listProfiles() });
+  async _profiles(ctx) {
+    return ok({ detected: await this.profiles.detect(), registered: this._visibleProfileList(ctx.instance) });
   }
 
   async _setProfile(ctx) {
@@ -328,7 +386,8 @@ class NotesServer extends EventEmitter {
     });
     this.registry.setInstanceProfile(ctx.instance.id, profile.id);
     await this.registry.flush();
-    this._broadcast({ type: 'profiles', profiles: this.registry.listProfiles() });
+    this.broadcastProfiles();
+    this.notifyAccess(ctx.instance.id);
     this.emit('change');
     return ok({ profile });
   }
@@ -339,7 +398,7 @@ class NotesServer extends EventEmitter {
     const profile = this.registry.renameProfile(ctx.params[0], name);
     if (!profile) throw new HttpError(404, 'unknown_profile');
     await this.registry.flush();
-    this._broadcast({ type: 'profiles', profiles: this.registry.listProfiles() });
+    this.broadcastProfiles();
     this.emit('change');
     return ok({ profile });
   }
@@ -348,7 +407,9 @@ class NotesServer extends EventEmitter {
     const raw = ctx.url.searchParams.get('since');
     const since = raw === null ? 0 : Number.parseInt(raw, 10);
     if (!Number.isInteger(since) || since < 0) throw new HttpError(400, 'invalid_since');
-    return ok({ seq: this.store.seq, notes: this.store.since(since) });
+    this._requireProfile(ctx.instance);
+    const notes = this.store.since(since).filter((n) => this._canSee(ctx.instance, n));
+    return ok({ seq: this.store.seq, notes: notes.map(publicNote) });
   }
 
   _knownProfileOrThrow(profileId) {
@@ -362,30 +423,38 @@ class NotesServer extends EventEmitter {
     const body = ctx.body;
     if (body.id !== undefined && String(body.id) !== id) throw new HttpError(400, 'id_mismatch');
 
+    this._requireProfile(ctx.instance);
     const existing = this.store.get(id);
+    if (existing && !this._canSee(ctx.instance, existing)) throw new HttpError(404, 'not_found'); // no se revela lo que no puede ver
     const profileId = body.profileId === undefined ? (existing ? existing.profileId : ctx.instance.profileId) : body.profileId;
     this._knownProfileOrThrow(profileId === '' ? null : profileId);
+    if (!profileId || !this._visibleProfiles(ctx.instance).has(String(profileId))) throw new HttpError(403, 'profile_not_allowed');
 
     const result = this.store.put({ ...body, id, profileId });
     if (result.error) throw new HttpError(400, 'invalid_note', { detail: result.error });
 
-    this._broadcast({ type: 'notes', notes: [result.note], seq: this.store.seq }, ctx.instance.id);
+    this.broadcastNotes([result.note], ctx.instance.id);
     this.emit('change');
     return ok({ note: result.note }, result.created ? 201 : 200);
   }
 
   _deleteNote(ctx) {
+    this._requireProfile(ctx.instance);
+    const current = this.store.get(ctx.params[0]);
+    if (!current || !this._canSee(ctx.instance, current)) throw new HttpError(404, 'not_found');
     const note = this.store.remove(ctx.params[0]);
     if (!note) throw new HttpError(404, 'not_found');
-    this._broadcast({ type: 'notes', notes: [note], seq: this.store.seq }, ctx.instance.id);
+    this.broadcastNotes([note], ctx.instance.id);
     this.emit('change');
-    return ok({ note });
+    return ok({ note: publicNote(note) });
   }
 
   // Importación masiva (p. ej. las notas que ya tenía una extensión). No pisa cambios más recientes ni borrados.
   _bulk(ctx) {
     const list = ctx.body.notes;
     if (!Array.isArray(list) || list.length > BULK_MAX_NOTES) throw new HttpError(400, 'invalid_bulk');
+    this._requireProfile(ctx.instance);
+    const allowed = this._visibleProfiles(ctx.instance);
 
     const imported = [];
     let skipped = 0;
@@ -397,12 +466,16 @@ class NotesServer extends EventEmitter {
         continue;
       }
       const prev = this.store.get(check.note.id);
+      if (prev && !this._canSee(ctx.instance, prev)) {
+        invalid++; // ese id pertenece a un perfil que no puede ver
+        continue;
+      }
       if (prev && prev.updatedAt >= check.note.updatedAt) {
         skipped++;
         continue;
       }
       const profileId = raw.profileId === undefined ? ctx.instance.profileId : raw.profileId;
-      if (profileId && !this.registry.getProfile(String(profileId))) {
+      if (!profileId || !allowed.has(String(profileId))) {
         invalid++;
         continue;
       }
@@ -412,7 +485,7 @@ class NotesServer extends EventEmitter {
     }
 
     for (let i = 0; i < imported.length; i += BROADCAST_CHUNK) {
-      this._broadcast({ type: 'notes', notes: imported.slice(i, i + BROADCAST_CHUNK), seq: this.store.seq }, ctx.instance.id);
+      this.broadcastNotes(imported.slice(i, i + BROADCAST_CHUNK), ctx.instance.id);
     }
     this.emit('change');
     return ok({ imported: imported.length, skipped, invalid, seq: this.store.seq });
@@ -427,23 +500,29 @@ class NotesServer extends EventEmitter {
   }
 
   async _open(ctx) {
+    const { noteId, url, profileId } = ctx.body;
+    const result = await this.openTarget({ noteId, url, profileId }, ctx.instance);
+    return ok(result);
+  }
+
+  // Abre una URL en el navegador y perfil correctos. Con `instance` solo se permiten notas y perfiles que esa
+  // extensión puede ver; sin ella (la propia app) no hay restricción.
+  async openTarget({ noteId, url, profileId }, instance = null) {
     const now = this.now();
     this.openLog = this.openLog.filter((t) => now - t < 10000);
     if (this.openLog.length >= 20) throw new HttpError(429, 'too_many_opens');
     this.openLog.push(now);
 
-    const { noteId, url: bodyUrl } = ctx.body;
-    let url = bodyUrl;
-    let profileId = ctx.body.profileId;
+    if (instance) this._requireProfile(instance);
     if (noteId !== undefined) {
       const note = this.store.get(String(noteId));
-      if (!note || note.deleted) throw new HttpError(404, 'not_found');
+      if (!note || note.deleted || (instance && !this._canSee(instance, note))) throw new HttpError(404, 'not_found');
       url = note.url;
       if (profileId === undefined) profileId = note.profileId;
     }
     if (!profileId) throw new HttpError(400, 'no_profile');
     const profile = this.registry.getProfile(String(profileId));
-    if (!profile) throw new HttpError(404, 'unknown_profile');
+    if (!profile || (instance && !this._visibleProfiles(instance).has(profile.id))) throw new HttpError(404, 'unknown_profile');
 
     const detected = await this.profiles.detect();
     if (!detected.some((p) => p.browser === profile.browser && p.dir === profile.dir)) {
@@ -456,7 +535,7 @@ class NotesServer extends EventEmitter {
       const status = { invalid_url: 400, invalid_browser: 400, invalid_profile: 400, browser_not_found: 409 }[err.code] || 500;
       throw new HttpError(status, err.code || 'open_failed');
     }
-    return ok({ ok: true, browser: profile.browser, profile: profile.name });
+    return { ok: true, browser: profile.browser, profile: profile.name };
   }
 
   // ---------- WebSocket ----------
@@ -526,15 +605,16 @@ class NotesServer extends EventEmitter {
           protocol: PROTOCOL,
           instanceId: instance.id,
           profile: this.registry.getProfile(instance.profileId),
-          profiles: this.registry.listProfiles(),
+          profiles: this._visibleProfileList(instance),
           seq: this.store.seq,
+          cloud: this.cloud,
         });
-        if (Number.isInteger(msg.since) && msg.since >= 0) {
+        if (Number.isInteger(msg.since) && msg.since >= 0 && instance.profileId) {
           const palette = this.store.getPalette();
           this._sendJson(ws, {
             type: 'catchup',
             seq: this.store.seq,
-            notes: this.store.since(msg.since),
+            notes: this.store.since(msg.since).filter((n) => this._canSee(instance, n)).map(publicNote),
             palette: palette && palette.seq > msg.since ? palette : null,
           });
         }
@@ -555,12 +635,16 @@ class NotesServer extends EventEmitter {
     const text = JSON.stringify(payload);
     for (const ws of this.clients) {
       if (!ws.instanceId || ws.instanceId === exceptInstanceId || ws.readyState !== 1) continue;
-      if (ws.bufferedAmount > 8 * 1024 * 1024) {
-        ws.terminate(); // cliente que no lee: no acumular memoria
-        continue;
-      }
-      ws.send(text);
+      this._sendBuffered(ws, text);
     }
+  }
+
+  _sendBuffered(ws, text) {
+    if (ws.bufferedAmount > 8 * 1024 * 1024) {
+      ws.terminate(); // cliente que no lee: no acumular memoria
+      return;
+    }
+    ws.send(text);
   }
 
   _pingSockets() {
@@ -579,4 +663,4 @@ class NotesServer extends EventEmitter {
   }
 }
 
-module.exports = { NotesServer, HttpError, PROTOCOL };
+module.exports = { NotesServer, HttpError, PROTOCOL, publicNote };

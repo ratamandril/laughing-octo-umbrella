@@ -10,12 +10,20 @@
 <body>
   <header class="top">
     <h1>Notas por URL</h1>
-    <span id="status" class="pill">Iniciando…</span>
+    <span class="row-gap"><span id="cloud" class="pill" hidden></span><span id="status" class="pill">Iniciando…</span></span>
   </header>
+
+  <nav class="tabs" role="tablist">
+    <button class="tab-btn active" role="tab" data-tab="conexion" aria-selected="true">Conexión</button>
+    <button class="tab-btn" role="tab" data-tab="notas" aria-selected="false">Notas</button>
+    <button class="tab-btn" role="tab" data-tab="papelera" aria-selected="false">Papelera <span id="trashBadge" class="count" hidden></span></button>
+  </nav>
+
+  <div id="tab-conexion" class="tab">
 
   <section class="card">
     <h2>Emparejar una extensión</h2>
-    <p class="muted">En la extensión, abre <b>Ajustes → Conectar con la app</b> y escribe este código. Caduca a los 5 minutos y sirve una sola vez.</p>
+    <p class="muted">En la extensión, abre <b>Ajustes → Conexión con la app</b> y escribe este código. Caduca a los 5 minutos y sirve una sola vez.</p>
     <div class="pair-row">
       <button id="newCode" class="primary">Generar código</button>
       <button id="cancelCode" class="ghost" hidden>Cancelar</button>
@@ -48,6 +56,30 @@
     </div>
     <p id="syncError" class="muted err" hidden></p>
   </section>
+
+  </div>
+
+  <div id="tab-notas" class="tab" hidden>
+    <div class="toolbar">
+      <input id="q" type="search" placeholder="Buscar en todas las notas…" aria-label="Buscar">
+      <select id="fProfile" aria-label="Perfil"></select>
+      <select id="fTag" aria-label="Etiqueta"></select>
+    </div>
+    <div class="toolbar">
+      <span id="notesCount" class="muted grow"></span>
+      <button id="collapseAll" class="ghost small">Contraer todas</button>
+      <button id="expandAll" class="ghost small">Expandir todas</button>
+    </div>
+    <div id="notesList"></div>
+    <p id="noNotes" class="muted" hidden>No hay notas que coincidan.</p>
+  </div>
+
+  <div id="tab-papelera" class="tab" hidden>
+    <p class="muted" id="trashInfo"></p>
+    <div class="toolbar"><button id="emptyTrash" class="ghost small danger-ghost">Vaciar papelera</button></div>
+    <div id="trashList"></div>
+    <p id="noTrash" class="muted" hidden>La papelera está vacía.</p>
+  </div>
 
   <footer class="foot">
     <span id="summary" class="muted"></span>

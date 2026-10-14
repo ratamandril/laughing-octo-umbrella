@@ -21,7 +21,11 @@ Datos en `%APPDATA%\notas-por-url-app` (`notes.json`, `config.json`). Se escribe
 1. Abre la app y pulsa **Generar código**.
 2. En cada perfil: carga `extension/`, abre **Ajustes → Conexión con la app**, escribe el código y elige a qué perfil corresponde ese navegador.
 3. Si ese perfil ya tenía notas, aparece **Importar a la app** (se importan una sola vez; las originales quedan como copia).
-4. Las notas de todos los perfiles se ven en cada uno, con su insignia de perfil y el botón **Abrir en su perfil**. Si la app está cerrada, los cambios se guardan y se envían al volver.
+4. Cada extensión ve solo las notas de su propio perfil. Las de los demás perfiles se ven desde la app; en **Conexión** puedes dar a una extensión permiso para ver otros perfiles. Si la app está cerrada, los cambios se guardan y se envían al volver.
+
+## Papelera y estado
+- Eliminar una nota la manda a la pestaña **Papelera** de la app (30 días); desde ahí se restaura o se elimina para siempre. Las extensiones nunca reciben su contenido.
+- El estado (app, internet, nube) se ve en el popup, en cada nota sin subir, en la ventana y en el icono de la bandeja.
 
 Prueba de extremo a extremo (dos Chromium con la extensión real contra la app): `node e2e/extension.e2e.js` (necesita Playwright y Chromium).
 

@@ -39,7 +39,11 @@ async function launch(name) {
   let [sw] = context.serviceWorkers();
   if (!sw) sw = await context.waitForEvent('serviceworker');
   const id = new URL(sw.url()).host;
-  return { name, context, sw, id, url: (file) => `chrome-extension://${id}/${file}` };
+  // El service worker de MV3 puede reiniciarse: siempre se usa el que esté vivo
+  return {
+    name, context, id, url: (file) => `chrome-extension://${id}/${file}`,
+    get sw() { return context.serviceWorkers().find((w) => w.url().includes(id)) || sw; },
+  };
 }
 
 const profiles = {
@@ -97,28 +101,105 @@ const profiles = {
   assert.equal(core.store.get('legacy1').profileId, core.registry.listProfiles().find((p) => p.dir === 'Default').id);
 
   const cacheOf = (page) => page.evaluate(() => chrome.storage.local.get(null));
-  console.log('4. La nota de A aparece en B sin hacer nada (WebSocket)');
-  await until(async () => (await cacheOf(pb)).n_legacy1, 'nota de A en B');
+  const profA = core.registry.listProfiles().find((p) => p.dir === 'Default');
+  const profB = core.registry.listProfiles().find((p) => p.dir === 'Profile 1');
+  const instB = core.registry.listInstances().find((i) => i.profileId === profB.id);
 
-  console.log('5. Crear una nota en B y verla en A');
+  console.log('4. Aislamiento: B no ve las notas de A (y A no ve las de B)');
+  await sleep(1200);
+  assert.ok(!(await cacheOf(pb)).n_legacy1, 'B no debe tener la nota de A');
   await pb.evaluate(() => NotesStore.save(NotesStore.create({ title: 'Nota de B', description: 'hecha en Trabajo', url: 'https://example.com/b', scope: 'page', tags: ['trabajo'] })));
-  const inA = await until(async () => Object.values(await cacheOf(pa)).find((v) => v && v.title === 'Nota de B'), 'nota de B en A');
-  assert.equal(inA.profileId, core.registry.listProfiles().find((p) => p.dir === 'Profile 1').id);
+  await until(() => core.store.since(0).some((n) => n.title === 'Nota de B'), 'la nota de B llega a la app');
+  await sleep(800);
+  assert.ok(!Object.values(await cacheOf(pa)).some((v) => v && v.title === 'Nota de B'), 'A no debe ver la nota de B');
+  assert.equal(core.store.since(0).find((n) => n.title === 'Nota de B').profileId, profB.id);
   await until(async () => !(await cacheOf(pb)).outbox || Object.keys((await cacheOf(pb)).outbox.notes).length === 0, 'cola de B vacía');
 
-  console.log('6. "Abrir en su perfil" desde B para la nota de A');
+  console.log('5. Dar permiso: B pasa a ver las notas de A, en vivo');
+  core.setCanSee(instB.id, [profA.id]);
+  await until(async () => (await cacheOf(pb)).n_legacy1, 'nota de A en B tras el permiso');
+  await pb.evaluate(() => chrome.runtime.sendMessage({ type: 'link:retry' }));
+
+  console.log('6. "Abrir en su perfil" desde el menú de B para la nota de A');
   await pb.goto(B.url('notes.html'));
   await pb.waitForSelector('text=Nota vieja de A');
   await pb.screenshot({ path: path.join(SHOTS, 'notes-B.png'), fullPage: true });
-  await pb.click('article:has-text("Nota vieja de A") >> text=Abrir en su perfil');
+  const cardA = pb.locator('article:has-text("Nota vieja de A")');
+  await cardA.locator('.menu-btn').click();
+  await pb.click('.menu >> text=Abrir en su perfil');
   await until(() => launched.length === 1, 'la app lanza el navegador');
   assert.deepEqual(launched[0], { browser: 'chrome', dir: 'Default', url: 'https://example.com/a' });
-  assert.equal(await pb.locator('article:has-text("Nota de B") >> text=Abrir en su perfil').count(), 0, 'sus propias notas no ofrecen abrir');
+  await pb.locator('article:has-text("Nota de B") .menu-btn').click();
+  assert.equal(await pb.locator('.menu >> text=Abrir en su perfil').count(), 0, 'sus propias notas no ofrecen abrir en otro perfil');
+  assert.equal(await pb.locator('.menu >> text=Abrir página').count(), 1, 'sí ofrecen abrir su URL');
+  await pb.keyboard.press('Escape');
+  assert.equal(await pb.locator('.menu').count(), 0, 'Esc cierra el menú');
 
-  console.log('7. Filtro por perfil');
+  console.log('7. Filtro por perfil y agrupación en "Todas mis notas"');
   await pb.selectOption('#fProfile', { label: 'Chrome · Personal' });
   assert.equal(await pb.locator('article').count(), 1);
   await pb.selectOption('#fProfile', '');
+  await pb.selectOption('#pGroup', 'profile');
+  assert.equal(await pb.locator('.group-sec').count(), 2);
+  await pb.selectOption('#pGroup', 'site');
+  await pb.click('#collapseAll');
+  assert.equal(await pb.locator('.group-sec.collapsed').count(), await pb.locator('.group-sec').count());
+  await pb.fill('#search', 'vieja');
+  assert.equal(await pb.locator('.group-sec:not(.collapsed)').count(), 1, 'al buscar se abren los grupos con resultados');
+  await pb.fill('#search', '');
+  await pb.click('#expandAll');
+  await pb.selectOption('#pView', 'simple');
+  assert.ok((await pb.locator('article.mode-simple').count()) >= 2);
+  await pb.reload();
+  assert.equal(await pb.inputValue('#pView'), 'simple', 'la vista se recuerda');
+  await pb.selectOption('#pView', 'detailed');
+  await pb.locator('article:has-text("Nota de B") .menu-btn').click();
+  await pb.click('.menu >> text=Vista simple');
+  assert.equal(await pb.locator('article:has-text("Nota de B").mode-simple').count(), 1, 'cambia solo esa nota');
+
+  console.log('7b. Popup: secciones desplegables, buscador, menú y estado');
+  const web = require('node:http').createServer((req, res) => { res.setHeader('Content-Type', 'text/html'); res.end('<title>Prueba</title><h1>' + req.url + '</h1>'); });
+  await new Promise((r) => web.listen(47399, '127.0.0.1', r));
+  const site = await B.context.newPage();
+  await site.goto('http://127.0.0.1:47399/pagina');
+  await pb.evaluate(async () => {
+    await NotesStore.save(NotesStore.create({ title: 'De este sitio', description: 'd1', url: 'http://127.0.0.1:47399/otra', scope: 'domain', tags: ['x'] }));
+    await NotesStore.save(NotesStore.create({ title: 'Solo esta URL', description: 'd2', url: 'http://127.0.0.1:47399/pagina', scope: 'page', tags: [] }));
+  });
+  const tabId = await B.sw.evaluate(async () => (await chrome.tabs.query({ url: 'http://127.0.0.1:47399/*' }))[0].id);
+  await B.sw.evaluate(async (id) => chrome.storage.session.set({ draft: { field: 'title', text: '', tabId: id, ts: Date.now() } }), tabId);
+  const popup = await B.context.newPage();
+  await popup.setViewportSize({ width: 400, height: 560 });
+  await popup.goto(B.url('popup.html'));
+  await popup.waitForSelector('#related article');
+  assert.equal(await popup.locator('#related article').count(), 2, 'esta página: la de la URL y la del sitio');
+  assert.equal(await popup.locator('#allBody').isHidden(), true, 'todas las notas empieza plegada');
+  await popup.click('#allHead');
+  assert.equal(await popup.locator('#allNotes article').count(), 2, 'las demás notas (sin repetir las de esta página)');
+  await popup.fill('#search', 'vieja');
+  await until(async () => (await popup.locator('#related article').count()) === 0, 'el buscador vacía la sección de esta página');
+  await until(async () => (await popup.locator('#allNotes article').count()) === 1, 'el buscador filtra las dos secciones');
+  await popup.fill('#search', '');
+  await until(async () => (await popup.locator('#related article').count()) === 2, 'vuelven las notas de esta página');
+  await popup.click('#allHead');
+  assert.equal(await popup.locator('#allBody').isHidden(), true);
+  await popup.locator('#related article').first().locator('.menu-btn').click();
+  await popup.click('.menu >> text=Vista simple');
+  assert.equal(await popup.locator('#related article.mode-simple').count(), 1);
+  await popup.click('#allHead');
+  await popup.screenshot({ path: path.join(SHOTS, 'popup-B.png') });
+  assert.match(await popup.textContent('#conn'), /nube sin configurar/);
+
+  // Estado de la nube: aviso por nota y línea de estado
+  core.server.setCloud({ state: 'online', pending: 2, syncedSeq: 0 });
+  await until(async () => (await popup.textContent('#conn')).includes('subiendo'), 'estado de la nube en el popup');
+  await until(async () => (await popup.locator('.safety:has-text("sin subir a la nube")').count()) >= 1, 'aviso "sin subir a la nube" en las notas');
+  core.server.setCloud({ state: 'online', pending: 0, syncedSeq: core.store.seq });
+  await until(async () => (await popup.textContent('#conn')).includes('a salvo'), 'todo a salvo');
+  await until(async () => (await popup.locator('.safety').count()) === 0, 'sin avisos cuando todo está a salvo');
+  await popup.close();
+  await site.close();
+  web.closeAllConnections(); await new Promise((r) => web.close(r));
 
   console.log('8. Sin la app: A guarda cambios y B no se entera; al volver, todo llega');
   await core.stop();
@@ -126,7 +207,7 @@ const profiles = {
   const pp = await A.context.newPage();
   await pp.goto(A.url('popup.html'));
   await pp.waitForSelector('#conn:not([hidden])');
-  assert.match(await pp.textContent('#conn'), /Sin conexión con la app/);
+  assert.match(await pp.textContent('#conn'), /App cerrada o sin conexión/);
   await pp.close();
   await pa.evaluate(() => NotesStore.save(NotesStore.create({ title: 'Escrita sin la app', description: '', url: 'https://example.com/off', scope: 'domain', tags: [] })));
   assert.equal(Object.keys((await cacheOf(pa)).outbox.notes).length, 1);
@@ -154,6 +235,11 @@ const profiles = {
   const again = core.newPairingCode();
   await pa.fill('#code', again.code);
   await pa.click('#pairBtn');
+  await until(async () => (await A.sw.evaluate(() => chrome.storage.session.get('conn'))).conn.state === 'noprofile', 'sin perfil la app no entrega notas');
+  await pa.waitForSelector('#linkOn:not([hidden])');
+  await until(async () => (await pa.$$eval('#profileSel option', (o) => o.length)) > 1, 'lista de perfiles');
+  await pa.selectOption('#profileSel', 'Default');
+  await pa.click('#saveProfile');
   await until(async () => (await A.sw.evaluate(() => chrome.storage.session.get('conn'))).conn.state === 'online', 'A vuelve a conectarse');
   await pa.screenshot({ path: path.join(SHOTS, 'options-A-repaired.png'), fullPage: true });
 

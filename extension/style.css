@@ -6,7 +6,7 @@
   color-scheme: light;
   --bg:#faf9f5; --card:#ffffff; --fg:#141413; --muted:#6b6a63; --line:#e6e3d8;
   --accent:#ae5033; --accent-hover:#964326; --on-accent:#ffffff; --ring:rgba(174,80,51,.22);
-  --danger:#b3261e; --ok:#4d7c3a;
+  --danger:#b3261e; --ok:#4d7c3a; --warn:#9a6700;
   --font-head:ui-serif, Georgia, 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Times New Roman', serif;
   --head-weight:500; --r-sm:.7rem; --r-md:1rem; --r-lg:1.2rem;
 }
@@ -14,7 +14,7 @@
   color-scheme: dark;
   --bg:#262624; --card:#30302e; --fg:#f0eee6; --muted:#a6a49a; --line:#403f3b;
   --accent:#d97757; --accent-hover:#e48a6c; --on-accent:#1f1e1d; --ring:rgba(217,119,87,.28);
-  --danger:#f0877b; --ok:#a3c389;
+  --danger:#f0877b; --ok:#a3c389; --warn:#e3b341;
   --font-head:ui-serif, Georgia, 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Times New Roman', serif;
   --head-weight:500; --r-sm:.7rem; --r-md:1rem; --r-lg:1.2rem;
 }
@@ -22,7 +22,7 @@
   color-scheme: dark;
   --bg:#16181d; --card:#1d2027; --fg:#e6e8ee; --muted:#9aa1b0; --line:#2b2f3a;
   --accent:#6ea0ff; --accent-hover:#8bb4ff; --on-accent:#0b1220; --ring:rgba(110,160,255,.25);
-  --danger:#ff7a7a; --ok:#16a34a;
+  --danger:#ff7a7a; --ok:#16a34a; --warn:#e3b341;
   --font-head:inherit; --head-weight:700; --r-sm:.55rem; --r-md:.7rem; --r-lg:.85rem;
 }
 /* Todo se mide en rem: cambiar el tamaño de letra (html) escala la interfaz entera */
@@ -117,10 +117,41 @@ button:focus-visible, .card:focus-visible { outline:2px solid var(--accent); out
 
 /* Conexión con la app */
 .p-conn { display:block; width:100%; text-align:left; background:none; border:0; border-bottom:1px solid var(--line); padding:.3rem .9rem; color:var(--muted); font-size:.82rem; cursor:pointer; }
-.p-conn.bad { color:var(--danger); }
+.p-conn[data-level=bad], .conn-line[data-level=bad] { color:var(--danger); }
+.p-conn[data-level=ok], .conn-line[data-level=ok] { color:var(--ok); }
+.p-conn[data-level=warn], .conn-line[data-level=warn] { color:var(--warn); }
+.p-conn[data-level=off], .conn-line[data-level=off] { color:var(--muted); }
+.safety { font-size:.78rem; color:var(--warn); margin-left:.4rem; white-space:nowrap; }
 .conn-line { background:none; border:0; padding:0; margin:.2rem 0 .6rem; color:var(--muted); font-size:.86rem; cursor:pointer; text-align:left; }
-.conn-line.bad { color:var(--danger); }
 .profile-line { font-size:.82rem; margin:.1rem 0 .3rem; }
 .link-box { max-width:34rem; }
 .link-box .row { align-items:center; }
 .link-box input#code { max-width:12rem; text-transform:uppercase; letter-spacing:.15em; }
+
+/* Menú Opciones */
+.menu { position:fixed; z-index:50; min-width:12rem; max-width:calc(100vw - 8px); background:var(--card, var(--bg)); border:1px solid var(--line); border-radius:var(--r-sm, .6rem); box-shadow:0 8px 24px rgba(0,0,0,.18); padding:.25rem; }
+.menu-item { display:block; width:100%; text-align:left; background:none; border:0; border-radius:.4rem; padding:.4rem .6rem; cursor:pointer; font-size:.92rem; }
+.menu-item:hover, .menu-item:focus-visible { background:var(--line); outline:none; }
+.menu-item.danger { color:var(--danger); }
+.menu-sep { height:1px; background:var(--line); margin:.25rem 0; }
+.menu-btn { font-size:1.15rem; line-height:1; padding:.1rem .45rem; width:auto; height:auto; min-width:1.8rem; }
+
+/* Popup: buscador y secciones desplegables */
+.p-search { flex:none; padding:0 .8rem .3rem; }
+.p-search input { margin:0; padding:.3rem .55rem; }
+.sec { margin-bottom:.4rem; }
+.sec-head { display:flex; align-items:center; gap:.4rem; width:100%; text-align:left; background:none; border:0; padding:.35rem 0; cursor:pointer; font-family:var(--serif, inherit); font-size:1.02rem; font-weight:500; }
+.sec-head .chev { display:inline-block; width:1rem; color:var(--muted); transition:transform .12s; }
+.sec-head[aria-expanded=false] .chev { transform:rotate(-90deg); }
+.sec-body[hidden] { display:none; }
+
+/* Todas mis notas: barra de visualización y grupos */
+.view-bar { margin-top:.6rem; gap:.8rem; flex-wrap:wrap; align-items:center; }
+.view-bar label { display:inline-flex; align-items:center; gap:.4rem; font-size:.9rem; color:var(--muted); }
+.view-bar select { width:auto; margin:0; padding:.25rem .5rem; }
+.small { padding:.25rem .7rem; font-size:.88rem; }
+.group-count { color:var(--muted); font-size:.9rem; font-weight:400; }
+.group-sec { margin-bottom:.3rem; }
+.group-sec.collapsed .group-body { display:none; }
+.group-sec.collapsed .chev { transform:rotate(-90deg); }
+.group-sec .sec-head .chev { transition:transform .12s; }

@@ -11,8 +11,9 @@ Sin dependencias ni paso de compilación: son archivos HTML, CSS y JavaScript co
 - **Notas ligadas a una URL** exacta o a **todo el dominio**, a elección al crear la nota.
 - **Título, descripción, etiquetas y color.** Los colores son categorías: cada una tiene nombre y una descripción de para qué la usas.
 - **Popup** de tamaño fijo: el formulario "Nueva nota" queda fijo y solo la lista de notas tiene barra de desplazamiento. Si la página tiene notas, el ícono muestra cuántas son.
-- **Tres vistas de nota:** simple (solo título), normal y detallada. En la vista simple, un clic sobre una nota la recorre por las tres, solo a ella.
-- **Página completa** ("Ver todas") con todas las notas agrupadas por sitio, búsqueda de texto y filtros por etiqueta, categoría y alcance.
+- **Menú «Opciones» en cada nota:** abrir la página, abrir en su perfil, copiar URL, editar, cambiar la vista (simple, normal o detallada) y eliminar.
+- **Popup con dos secciones desplegables:** «Notas de esta página» (misma URL o dominio) y «Todas las notas», con un buscador para ambas y una línea de estado (app, nube).
+- **Página completa** ("Todas mis notas") con vista, orden y agrupación propios, grupos por sitio desplegables (contraer/expandir todos), búsqueda de texto y filtros por etiqueta, categoría y alcance.
 - **Menú contextual:** selecciona texto en una página, clic derecho y guárdalo como título o como descripción de una nota.
 - **Atajo de teclado** para abrir el popup (`Alt+Shift+N` por defecto, configurable).
 - **Exportar e importar JSON.** Al importar se combinan las notas: una nota existente solo se reemplaza si la importada es más reciente.

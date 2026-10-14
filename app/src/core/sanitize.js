@@ -76,23 +76,29 @@ function sanitizeNote(raw, { now = Date.now() } = {}) {
   }
 
   const deleted = raw.deleted === true;
+  // Una nota borrada conserva su contenido (papelera) hasta que se purga. Los marcadores antiguos, que ya
+  // venían en blanco, cuentan como purgados.
+  const hadContent = !!(raw.title || raw.description);
+  const purged = deleted && (raw.purged === true || (raw.purged === undefined && !hadContent));
   const normalized = normalizeUrl(url);
   const title = String(raw.title ?? '').trim().slice(0, LIMITS.title);
 
   return {
     note: {
       id,
-      title: deleted ? '' : title || normalized.slice(0, LIMITS.title),
-      description: deleted ? '' : String(raw.description ?? '').slice(0, LIMITS.description),
+      title: purged ? '' : title || normalized.slice(0, LIMITS.title),
+      description: purged ? '' : String(raw.description ?? '').slice(0, LIMITS.description),
       url: normalized,
       host: hostOf(url),
       scope: raw.scope === 'domain' ? 'domain' : 'page',
-      tags: deleted ? [] : parseTags(raw.tags ?? []),
+      tags: purged ? [] : parseTags(raw.tags ?? []),
       color: raw.color === undefined || raw.color === null || raw.color === '' ? null : String(raw.color).slice(0, LIMITS.color),
       profileId,
       createdAt: Math.min(timestamp(raw.createdAt, now), now),
       updatedAt: Math.min(timestamp(raw.updatedAt, now), now + 24 * 3600 * 1000),
       deleted,
+      deletedAt: deleted ? Math.min(timestamp(raw.deletedAt, now), now) : null,
+      purged,
     },
   };
 }

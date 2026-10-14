@@ -45,9 +45,92 @@ function profileLabel(profile) {
   return (BROWSER_NAMES[profile.browser] || 'Navegador') + ' · ' + profile.name;
 }
 
-// profiles: lista de perfiles de la app (null si la extensión no está conectada).
-// onOpen: abrir la nota en su navegador y perfil (solo se ofrece si es de otro perfil).
-function noteCard(note, { mode = 'normal', palette = [], onEdit, onDelete, onTag, onCycle, showUrl = false, profiles = null, myProfileId = null, onOpen = null }) {
+// ---------- Menú "Opciones" de cada nota ----------
+let openMenu = null;
+const menuIsOpen = () => !!openMenu; // mientras hay un menú abierto no se redibuja la lista (lo cerraría)
+
+function closeMenu({ focusButton = false } = {}) {
+  if (!openMenu) return;
+  const { menu, button } = openMenu;
+  openMenu = null;
+  menu.remove();
+  button.setAttribute('aria-expanded', 'false');
+  if (focusButton) button.focus();
+}
+
+document.addEventListener('click', (e) => {
+  if (openMenu && !openMenu.menu.contains(e.target) && e.target !== openMenu.button) closeMenu();
+});
+document.addEventListener('keydown', (e) => {
+  if (openMenu && e.key === 'Escape') { e.stopPropagation(); closeMenu({ focusButton: true }); }
+}, true);
+window.addEventListener('scroll', (e) => {
+  if (!openMenu) return;
+  if (e.target instanceof Node && openMenu.menu.contains(e.target)) return; // el scroll del propio menú no lo cierra
+  // Solo se cierra si el botón se desplazó de verdad (así el menú no queda flotando lejos de él)
+  const r = openMenu.button.getBoundingClientRect();
+  if (Math.abs(r.top - openMenu.top) > 1 || Math.abs(r.left - openMenu.left) > 1) closeMenu();
+}, true);
+window.addEventListener('resize', () => closeMenu());
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const area = el('textarea', { style: 'position:fixed;opacity:0' });
+    area.value = text;
+    document.body.append(area);
+    area.select();
+    const ok = document.execCommand('copy');
+    area.remove();
+    return ok;
+  }
+}
+
+// items: [{ label, onclick, danger, checked, separator }]
+function showMenu(button, items) {
+  closeMenu();
+  const menu = el('div', { class: 'menu', role: 'menu' });
+  for (const item of items) {
+    if (item.separator) { menu.append(el('div', { class: 'menu-sep', role: 'separator' })); continue; }
+    const b = el('button', {
+      type: 'button', role: item.checked === undefined ? 'menuitem' : 'menuitemradio',
+      class: 'menu-item' + (item.danger ? ' danger' : ''),
+      onclick: () => { closeMenu(); item.onclick(); },
+    }, item.checked === undefined ? '' : (item.checked ? '● ' : '○ '), item.label);
+    if (item.checked !== undefined) b.setAttribute('aria-checked', String(!!item.checked));
+    menu.append(b);
+  }
+  document.body.append(menu);
+
+  // Se coloca junto al botón, dentro de la ventana, hacia abajo o hacia arriba según el espacio
+  const r = button.getBoundingClientRect();
+  const mw = menu.offsetWidth, mh = menu.offsetHeight;
+  const left = Math.max(4, Math.min(window.innerWidth - mw - 4, r.right - mw));
+  const below = window.innerHeight - r.bottom - 6;
+  const top = below >= mh || r.top < mh ? r.bottom + 2 : r.top - mh - 2;
+  menu.style.left = left + 'px';
+  menu.style.top = Math.max(4, Math.min(window.innerHeight - mh - 4, top)) + 'px';
+
+  openMenu = { menu, button, top: r.top, left: r.left };
+  button.setAttribute('aria-expanded', 'true');
+  const buttons = [...menu.querySelectorAll('button')];
+  buttons[0].focus();
+  menu.addEventListener('keydown', (e) => {
+    const i = buttons.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown') { e.preventDefault(); buttons[(i + 1) % buttons.length].focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); buttons[(i - 1 + buttons.length) % buttons.length].focus(); }
+    else if (e.key === 'Tab') closeMenu();
+  });
+}
+
+const VIEW_LABELS = { simple: 'Vista simple', normal: 'Vista normal', detailed: 'Vista detallada' };
+
+// mode: "simple" | "normal" | "detailed"
+// profiles: perfiles que esta extensión puede ver (null si no se muestran). onOpen: abrir en su perfil (notas de otro perfil).
+// onView(note, modo): cambiar la vista solo de esta nota. safety: null | 'app' | 'cloud' (aún no está a salvo).
+function noteCard(note, { mode = 'normal', palette = [], onEdit, onDelete, onTag, onCycle, onView, showUrl = false, profiles = null, myProfileId = null, onOpen = null, safety = null, onNotice = null }) {
   const profile = profiles && note.profileId ? profiles.find((p) => p.id === note.profileId) || null : null;
   const foreign = !!(profile && onOpen && note.profileId !== myProfileId);
   const cat = colorOf(palette, note.color);
@@ -71,11 +154,33 @@ function noteCard(note, { mode = 'normal', palette = [], onEdit, onDelete, onTag
     });
   }
 
-  const actions = el('span', { class: 'actions' },
-    foreign ? el('button', { class: 'link', title: 'Abrir en ' + profileLabel(profile), onclick: () => onOpen(note) }, 'Abrir en su perfil') : null,
-    el('button', { class: 'link', onclick: () => onEdit(note) }, 'Editar'),
-    el('button', { class: 'link danger', onclick: () => onDelete(note) }, 'Eliminar')
-  );
+  const menuBtn = el('button', {
+    type: 'button', class: 'icon-btn menu-btn', title: 'Opciones', 'aria-label': 'Opciones de la nota',
+    'aria-haspopup': 'menu', 'aria-expanded': 'false',
+  }, '⋯');
+  menuBtn.addEventListener('click', () => {
+    if (openMenu && openMenu.button === menuBtn) return closeMenu();
+    const items = [
+      { label: 'Abrir página', onclick: () => chrome.tabs.create({ url: note.url }) },
+    ];
+    if (foreign) items.push({ label: 'Abrir en su perfil (' + profileLabel(profile) + ')', onclick: () => onOpen(note) });
+    items.push({ label: 'Copiar URL', onclick: async () => { const ok = await copyText(note.url); if (onNotice) onNotice(ok ? 'URL copiada.' : 'No se pudo copiar.', !ok); } });
+    items.push({ separator: true });
+    items.push({ label: 'Editar', onclick: () => onEdit(note) });
+    if (onView) {
+      items.push({ separator: true });
+      for (const m of ['simple', 'normal', 'detailed']) items.push({ label: VIEW_LABELS[m], checked: m === mode, onclick: () => onView(note, m) });
+    }
+    items.push({ separator: true });
+    items.push({ label: 'Eliminar', danger: true, onclick: () => onDelete(note) });
+    showMenu(menuBtn, items);
+  });
+  const actions = el('span', { class: 'actions' }, menuBtn);
+
+  const safetyBadge = safety
+    ? el('span', { class: 'safety', title: safety === 'app' ? 'Todavía no se envió a la app' : 'La app aún no la subió a la nube' },
+        safety === 'app' ? '⏳ sin enviar a la app' : '☁ sin subir a la nube')
+    : null;
 
   const tags = note.tags.length
     ? el('div', { class: 'tags' }, ...note.tags.map((t) =>
@@ -88,7 +193,7 @@ function noteCard(note, { mode = 'normal', palette = [], onEdit, onDelete, onTag
     : null;
 
   if (mode === 'simple') {
-    card.append(el('div', { class: 'simple-row' }, el('strong', { class: 't' }, note.title), actions));
+    card.append(el('div', { class: 'simple-row' }, el('strong', { class: 't' }, note.title), safetyBadge, actions));
     return card;
   }
 
@@ -96,7 +201,6 @@ function noteCard(note, { mode = 'normal', palette = [], onEdit, onDelete, onTag
     el('strong', {}, note.title),
     el('span', { class: 'badge' }, scopeLabel)
   ));
-  if (profile) card.append(el('div', { class: 'profile-line muted' }, profileLabel(profile) + (note.profileId === myProfileId ? ' (este perfil)' : '')));
 
   if (mode === 'detailed' && cat) {
     card.append(el('div', { class: 'cat' },
@@ -105,6 +209,7 @@ function noteCard(note, { mode = 'normal', palette = [], onEdit, onDelete, onTag
     card.querySelector('.dot').style.background = cat.hex;
   }
 
+  if (profile) card.append(el('div', { class: 'profile-line muted' }, profileLabel(profile) + (note.profileId === myProfileId ? ' (este perfil)' : '')));
   if (note.description) card.append(el('p', { class: 'desc' }, note.description));
   if (urlLink) card.append(urlLink);
   if (tags) card.append(tags);
@@ -112,7 +217,7 @@ function noteCard(note, { mode = 'normal', palette = [], onEdit, onDelete, onTag
   const dates = mode === 'detailed'
     ? 'Creada ' + fmtDate(note.createdAt) + ' · Editada ' + fmtDate(note.updatedAt)
     : fmtDate(note.updatedAt);
-  card.append(el('div', { class: 'card-foot' }, el('span', { class: 'muted' }, dates), actions));
+  card.append(el('div', { class: 'card-foot' }, el('span', { class: 'muted' }, dates, safetyBadge), actions));
   return card;
 }
 

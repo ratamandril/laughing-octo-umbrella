@@ -12,6 +12,13 @@ let selectedColor = null;
 let filterColor = '';
 let filterTag = '';
 let shownNotes = [];
+let shownAll = [];
+let allLimit = 100;
+let query = '';
+let safetyCtx = null;
+const PAGE_SIZE = 100;
+let sections = { page: true, all: false }; // secciones desplegadas (se recuerdan)
+try { sections = { ...sections, ...JSON.parse(localStorage.getItem('sections') || '{}') }; } catch { /* sin caché */ }
 let link = null; // enlace con la app (null si la extensión no está conectada)
 let profiles = [];
 const viewOverride = new Map(); // id de nota -> vista temporal
@@ -103,9 +110,9 @@ function drawSwatches() {
   swatchPicker($('#swatches'), palette, selectedColor, (id) => { selectedColor = id; });
 }
 
-function fillFilters(related) {
-  const usedColors = palette.filter((c) => related.some((n) => n.color === c.id));
-  const tags = [...NotesStore.allTags(related).keys()];
+function fillFilters(notes) {
+  const usedColors = palette.filter((c) => notes.some((n) => n.color === c.id));
+  const tags = [...NotesStore.allTags(notes).keys()];
   if (!usedColors.some((c) => c.id === filterColor)) filterColor = '';
   if (!tags.includes(filterTag)) filterTag = '';
 
@@ -113,21 +120,65 @@ function fillFilters(related) {
   $('#fTag').replaceChildren(new Option('Todas las etiquetas', ''), ...tags.map((t) => new Option('#' + t, t)));
   $('#fColor').value = filterColor;
   $('#fTag').value = filterTag;
-  $('#filters').hidden = related.length < 2 || (!usedColors.length && !tags.length);
+  $('#filters').hidden = !usedColors.length && !tags.length;
+}
+
+function applySections() {
+  // Al buscar se abren las dos secciones para ver todos los resultados (sin cambiar lo que se recuerda)
+  const searching = !!query.trim();
+  const pageOpen = searching || sections.page;
+  const allOpen = searching || sections.all;
+  $('#pageHead').setAttribute('aria-expanded', String(pageOpen));
+  $('#pageBody').hidden = !pageOpen;
+  $('#allHead').setAttribute('aria-expanded', String(allOpen));
+  $('#allBody').hidden = !allOpen;
+}
+
+function toggleSection(name) {
+  sections[name] = !sections[name];
+  try { localStorage.setItem('sections', JSON.stringify(sections)); } catch { /* sin caché */ }
+  applySections();
+  if (name === 'all' && sections.all) drawAll();
 }
 
 async function render() {
-  [link, profiles] = await Promise.all([NotesStore.getLink(), Link.profiles()]);
-  const related = NotesStore.forUrl(await NotesStore.getAll(), tab.url);
-  fillFilters(related);
-  const shown = NotesStore.filter(related, { tag: filterTag, color: filterColor });
+  [link, profiles, safetyCtx] = await Promise.all([NotesStore.getLink(), Link.profiles(), Link.safetyContext()]);
+  const everything = await NotesStore.getAll();
+  const related = NotesStore.forUrl(everything, tab.url);
+  const relatedIds = new Set(related.map((n) => n.id));
+  fillFilters(everything);
 
-  $('#empty').hidden = related.length > 0;
-  $('#relatedTitle').hidden = related.length === 0;
-  $('#relatedTitle').textContent = 'Notas de esta página (' + shown.length + (shown.length !== related.length ? ' de ' + related.length : '') + ')';
+  const criteria = { q: query, tag: filterTag, color: filterColor };
+  const shown = NotesStore.filter(related, criteria);
+  const others = NotesStore.filter(everything.filter((n) => !relatedIds.has(n.id)), criteria);
+  const filtering = !!(query.trim() || filterTag || filterColor);
+
+  $('#empty').hidden = shown.length > 0;
+  $('#empty').textContent = related.length && filtering ? 'Ninguna nota de esta página coincide.' : 'Aún no hay notas para esta página.';
+  $('#pageTitle').textContent = 'Notas de esta página (' + shown.length + (shown.length !== related.length ? ' de ' + related.length : '') + ')';
+  $('#allTitle').textContent = 'Todas las notas (' + others.length + ')';
 
   shownNotes = shown;
+  shownAll = others;
+  applySections();
   draw();
+  drawAll();
+}
+
+function cardOptions(n) {
+  // Con una sola persona/perfil visible no hace falta mostrar el perfil
+  const multi = !!link && profiles.length > 1;
+  const mode = viewOverride.get(n.id) || settings.view;
+  return {
+    mode, palette,
+    onEdit: startEdit, onDelete: removeNote,
+    onTag: (t) => { filterTag = t; render(); },
+    onCycle: settings.view === 'simple' ? cycleNote : null,
+    onView: setNoteView,
+    onNotice: notice,
+    profiles: multi ? profiles : null, myProfileId: link && link.profileId, onOpen: openInProfile,
+    safety: Link.noteSafety(n, safetyCtx),
+  };
 }
 
 // Dibuja las tarjetas con las notas ya cargadas (sin volver a leer el almacenamiento)
@@ -136,18 +187,39 @@ function draw() {
   const top = wrap.scrollTop;
   const box = $('#related');
   box.replaceChildren();
-  for (const n of shownNotes) {
-    // El cambio por nota solo existe mientras la vista general sea "Simple"
-    const mode = (settings.view === 'simple' && viewOverride.get(n.id)) || settings.view;
-    box.append(noteCard(n, {
-      mode, palette,
-      onEdit: startEdit, onDelete: removeNote,
-      onTag: (t) => { filterTag = t; render(); },
-      onCycle: settings.view === 'simple' ? cycleNote : null,
-      profiles: link ? profiles : null, myProfileId: link && link.profileId, onOpen: openInProfile,
-    }));
-  }
+  for (const n of shownNotes) box.append(noteCard(n, cardOptions(n)));
   wrap.scrollTop = top;
+}
+
+function drawAll() {
+  if ($('#allBody').hidden) return; // solo se dibuja lo que se ve
+  const wrap = $('#listWrap');
+  const top = wrap.scrollTop;
+  const box = $('#allNotes');
+  box.replaceChildren();
+  for (const n of shownAll.slice(0, allLimit)) box.append(noteCard(n, cardOptions(n)));
+  $('#moreAll').hidden = shownAll.length <= allLimit;
+  $('#moreAll').textContent = 'Mostrar más (' + (shownAll.length - allLimit) + ' restantes)';
+  $('#allHint').hidden = !shownNotes.length;
+  $('#allEmpty').hidden = shownAll.length > 0;
+  wrap.scrollTop = top;
+}
+
+function redraw() { draw(); drawAll(); }
+
+let noticeTimer = null;
+function notice(text, isError = false) {
+  const box = $('#notice');
+  box.hidden = false;
+  box.textContent = text;
+  box.classList.toggle('error', isError);
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => { box.hidden = true; }, 3000);
+}
+
+function setNoteView(note, mode) {
+  if (mode === settings.view) viewOverride.delete(note.id); else viewOverride.set(note.id, mode);
+  redraw();
 }
 
 // simple → normal → detallada → simple, solo para la nota pulsada y solo hasta cerrar el popup
@@ -155,15 +227,15 @@ const NEXT_VIEW = { simple: 'normal', normal: 'detailed', detailed: 'simple' };
 function cycleNote(note) {
   const next = NEXT_VIEW[viewOverride.get(note.id) || 'simple'];
   if (next === 'simple') viewOverride.delete(note.id); else viewOverride.set(note.id, next);
-  draw();
+  redraw();
 }
 
 async function openInProfile(note) {
   try {
     await Link.openNote(note.id);
-    $('#error').textContent = '';
+    notice('Abriendo en su perfil…');
   } catch (err) {
-    $('#error').textContent = err.message;
+    notice(err.message, true);
   }
 }
 
@@ -173,16 +245,25 @@ function paintConn() {
 
 // Cambios que llegan de otros perfiles (a través de la app) o del estado de la conexión
 let refreshTimer = null;
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'session') return paintConn();
-  if (area !== 'local' || !tab) return;
-  if (!Object.keys(changes).some((k) => k.startsWith('n_') || k === 'palette' || k === 'profiles' || k === 'link')) return;
+function scheduleRefresh(reloadPalette = false) {
   clearTimeout(refreshTimer);
   refreshTimer = setTimeout(async () => {
-    palette = await NotesStore.getPalette();
-    drawSwatches();
+    if (menuIsOpen()) return scheduleRefresh(reloadPalette); // espera a que se cierre el menú
+    if (reloadPalette) { palette = await NotesStore.getPalette(); drawSwatches(); }
     render();
   }, 120);
+}
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (!tab) return;
+  if (area === 'session') {
+    paintConn();
+    if (changes.cloud || changes.conn) scheduleRefresh(); // los avisos "sin subir" dependen de la nube
+    return;
+  }
+  if (area !== 'local') return;
+  const keys = Object.keys(changes);
+  if (keys.includes('outbox') || keys.includes('link')) paintConn();
+  if (keys.some((k) => k.startsWith('n_') || ['palette', 'profiles', 'link', 'outbox'].includes(k))) scheduleRefresh(keys.includes('palette'));
 });
 
 // ---------- Formulario ----------
@@ -251,6 +332,10 @@ $('#cancelBtn').addEventListener('click', resetForm);
 $('#toggleForm').addEventListener('click', () => setSetting({ formCollapsed: !settings.formCollapsed }));
 
 // ---------- Filtros y navegación ----------
+$('#search').addEventListener('input', (e) => { query = e.target.value; allLimit = PAGE_SIZE; render(); });
+$('#pageHead').addEventListener('click', () => toggleSection('page'));
+$('#allHead').addEventListener('click', () => toggleSection('all'));
+$('#moreAll').addEventListener('click', () => { allLimit += PAGE_SIZE; drawAll(); });
 $('#fColor').addEventListener('change', (e) => { filterColor = e.target.value; render(); });
 $('#fTag').addEventListener('change', (e) => { filterTag = e.target.value; render(); });
 $('#openAll').addEventListener('click', async () => { await openPage('notes.html'); window.close(); });

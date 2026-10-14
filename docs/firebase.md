@@ -19,7 +19,7 @@ Es opcional y gratis dentro del plan Spark para un uso personal. La app guarda u
 5. En la app, sección **Respaldo en Firestore → Elegir clave…** y selecciona ese archivo. La app comprueba que sirva y la copia a su carpeta de datos; después puedes borrar el original de Descargas.
 
 ## Cómo funciona
-- Estructura en Firestore: `notes/{id}`, `profiles/{id}` y `meta/palette`. Los borrados se guardan como marcas (`deleted: true`) para que se propaguen a otros equipos.
+- Estructura en Firestore: `notes/{id}`, `profiles/{id}` y `meta/palette`. Los borrados se guardan como marcas (`deleted: true`, `deletedAt`) **conservando el contenido**, de modo que Firestore sirve de copia de la papelera: solo se recuperan desde la app. Al purgar (manual o a los 30 días) el contenido se vacía. Las marcas antiguas ya vacías no son recuperables.
 - Cada cambio se sube en ~1 s. Sin internet los cambios se acumulan (también si cierras la app) y se suben al volver, con reintentos cada 5 s, 15 s, 1 min y 5 min.
 - Los cambios hechos desde otro equipo llegan por escucha en tiempo real y se empujan a las extensiones.
 - Conflictos: gana la edición más reciente (por fecha de modificación).

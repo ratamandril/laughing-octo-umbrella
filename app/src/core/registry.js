@@ -74,6 +74,15 @@ class Registry {
     return [...this.instances.values()].map(publicInstance);
   }
 
+  // Perfiles, además del propio, cuyas notas puede ver esta extensión
+  setInstanceCanSee(instanceId, profileIds) {
+    const instance = this.instances.get(instanceId);
+    if (!instance) return false;
+    instance.canSee = [...new Set(profileIds)].filter((id) => this.profiles.has(id) && id !== instance.profileId);
+    this.file.markDirty();
+    return true;
+  }
+
   setInstanceProfile(instanceId, profileId) {
     const instance = this.instances.get(instanceId);
     if (!instance) return false;

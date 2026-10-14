@@ -30,6 +30,32 @@
       <option value="domain">Solo de sitio</option>
     </select>
   </div>
+  <div class="row view-bar" role="group" aria-label="Visualización">
+    <label>Vista
+      <select id="pView">
+        <option value="simple">Simple</option>
+        <option value="normal">Normal</option>
+        <option value="detailed">Detallada</option>
+      </select>
+    </label>
+    <label>Orden
+      <select id="pSort">
+        <option value="recent">Más recientes</option>
+        <option value="old">Más antiguas</option>
+        <option value="az">Título A–Z</option>
+      </select>
+    </label>
+    <label>Agrupar por
+      <select id="pGroup">
+        <option value="site">Sitio</option>
+        <option value="profile" hidden>Perfil</option>
+        <option value="none">Sin agrupar</option>
+      </select>
+    </label>
+    <span class="grow"></span>
+    <button class="ghost small" id="collapseAll">Contraer todas</button>
+    <button class="ghost small" id="expandAll">Expandir todas</button>
+  </div>
   <div id="count" class="muted" style="margin-top:8px"></div>
   <section id="list"></section>
 
