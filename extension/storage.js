@@ -84,7 +84,7 @@ const NotesStore = (() => {
       const outbox = { notes: { ...((current && current.notes) || {}) }, palette: (current && current.palette) || null };
       const toSet = {};
       for (const n of put) {
-        const note = { ...n, profileId: n.profileId === undefined ? link.profileId || null : n.profileId };
+        const note = { ...n, profileId: n.profileId || link.profileId || null }; // sin perfil → el de esta extensión
         toSet[PREFIX + n.id] = note;
         outbox.notes[n.id] = { op: 'put', t: nextT(outbox.notes[n.id]) };
       }

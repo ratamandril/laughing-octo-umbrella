@@ -25,9 +25,9 @@ La app escucha en `http://127.0.0.1:47321` (puerto configurable con `NOTAS_PORT`
 | `PUT /me/profile {browser, dir, name?}` | asigna esta extensión a un perfil detectado |
 | `PATCH /profiles/:id {name}` | renombra un perfil |
 | `GET /notes?since=<seq>` | notas visibles con `seq` mayor; con `since>0` incluye las borradas **sin contenido** (`deleted:true`) |
-| `PUT /notes/:id` | crea (201) o actualiza (200); si no se envía `profileId`, hereda el de la instancia |
+| `PUT /notes/:id` | crea (201) o actualiza (200); si `profileId` falta, es `null` o vacío, hereda el de la nota o el de la instancia |
 | `DELETE /notes/:id` | manda la nota a la papelera de la app (el contenido se conserva solo en la app y en Firestore) |
-| `POST /notes/bulk {notes}` | importación; no pisa cambios más recientes → `{imported, skipped, invalid, seq}` |
+| `POST /notes/bulk {notes}` | importación; no pisa cambios más recientes → `{imported, skipped, invalid, rejected, seq}`. `rejected` lista los ids que esta extensión no puede tener (son de otro perfil): debe quitarlos de su caché |
 | `GET/PUT /palette` | categorías de color (`{list}`) |
 | `POST /open {noteId}` o `{url, profileId}` | abre la URL en el navegador y perfil correctos |
 

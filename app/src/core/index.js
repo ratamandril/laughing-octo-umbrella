@@ -160,6 +160,16 @@ function createCore(options = {}) {
       const palette = store.getPalette();
       return { notes, palette: palette ? palette.list : [], profiles: registry.listProfiles() };
     },
+    // Una nota sin perfil no la ve ninguna extensión: solo se puede asignar desde la app
+    assignNoteProfile(id, profileId) {
+      const note = store.get(String(id));
+      if (!note || note.deleted || note.profileId || !registry.getProfile(String(profileId))) return null;
+      const result = store.put({ ...note, profileId: String(profileId) });
+      if (result.error) return null;
+      server.broadcastNotes([result.note]);
+      changed();
+      return result.note;
+    },
     noteUrl: (id) => {
       const note = store.get(String(id));
       return note && !note.deleted ? note.url : null;

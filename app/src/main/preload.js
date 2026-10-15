@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('notasApp', {
   openNote: (id) => ipcRenderer.invoke('notes:open', id),
   copyNoteUrl: (id) => ipcRenderer.invoke('notes:copy', id),
   deleteNote: (id) => ipcRenderer.invoke('notes:delete', id),
+  assignNoteProfile: (id, profileId) => ipcRenderer.invoke('notes:assign', id, profileId),
   listTrash: () => ipcRenderer.invoke('trash:list'),
   restoreNote: (id) => ipcRenderer.invoke('trash:restore', id),
   purgeNote: (id) => ipcRenderer.invoke('trash:purge', id),

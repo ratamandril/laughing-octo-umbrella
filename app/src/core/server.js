@@ -426,8 +426,9 @@ class NotesServer extends EventEmitter {
     this._requireProfile(ctx.instance);
     const existing = this.store.get(id);
     if (existing && !this._canSee(ctx.instance, existing)) throw new HttpError(404, 'not_found'); // no se revela lo que no puede ver
-    const profileId = body.profileId === undefined ? (existing ? existing.profileId : ctx.instance.profileId) : body.profileId;
-    this._knownProfileOrThrow(profileId === '' ? null : profileId);
+    const asked = body.profileId === undefined || body.profileId === null || body.profileId === '' ? null : String(body.profileId);
+    const profileId = asked || (existing ? existing.profileId : ctx.instance.profileId);
+    this._knownProfileOrThrow(profileId);
     if (!profileId || !this._visibleProfiles(ctx.instance).has(String(profileId))) throw new HttpError(403, 'profile_not_allowed');
 
     const result = this.store.put({ ...body, id, profileId });
@@ -459,6 +460,7 @@ class NotesServer extends EventEmitter {
     const imported = [];
     let skipped = 0;
     let invalid = 0;
+    const rejected = []; // ids que esta extensión no puede tener (pertenecen a otro perfil): debe quitarlos de su caché
     for (const raw of list) {
       const check = sanitizeNote(raw, { now: this.now() });
       if (check.error) {
@@ -468,15 +470,17 @@ class NotesServer extends EventEmitter {
       const prev = this.store.get(check.note.id);
       if (prev && !this._canSee(ctx.instance, prev)) {
         invalid++; // ese id pertenece a un perfil que no puede ver
+        rejected.push(check.note.id);
         continue;
       }
       if (prev && prev.updatedAt >= check.note.updatedAt) {
         skipped++;
         continue;
       }
-      const profileId = raw.profileId === undefined ? ctx.instance.profileId : raw.profileId;
+      const profileId = raw.profileId === undefined || raw.profileId === null || raw.profileId === '' ? ctx.instance.profileId : raw.profileId;
       if (!profileId || !allowed.has(String(profileId))) {
         invalid++;
+        rejected.push(check.note.id);
         continue;
       }
       const result = this.store.put({ ...raw, profileId }, { keepTimestamps: true, allowDeleted: true });
@@ -488,7 +492,7 @@ class NotesServer extends EventEmitter {
       this.broadcastNotes(imported.slice(i, i + BROADCAST_CHUNK), ctx.instance.id);
     }
     this.emit('change');
-    return ok({ imported: imported.length, skipped, invalid, seq: this.store.seq });
+    return ok({ imported: imported.length, skipped, invalid, rejected, seq: this.store.seq });
   }
 
   _putPalette(ctx) {

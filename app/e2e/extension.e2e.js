@@ -115,6 +115,25 @@ const profiles = {
   assert.equal(core.store.since(0).find((n) => n.title === 'Nota de B').profileId, profB.id);
   await until(async () => !(await cacheOf(pb)).outbox || Object.keys((await cacheOf(pb)).outbox.notes).length === 0, 'cola de B vacía');
 
+  console.log('4b. B tiene en su cuenta las mismas notas antiguas que A: no se quedan como copias propias');
+  const legacyNote = { id: 'legacy1', title: 'Nota vieja de A', description: 'de antes', url: 'https://example.com/a', host: 'example.com', scope: 'page', tags: ['viejo'], color: null, createdAt: 1000, updatedAt: 2000 };
+  await pb.evaluate((n) => chrome.storage.sync.set({ n_legacy1: n }), legacyNote);
+  await pb.evaluate(() => NotesStore.importLegacy());
+  await until(async () => { const c = await cacheOf(pb); return !c.n_legacy1 && (!c.outbox || Object.keys(c.outbox.notes).length === 0); }, 'la copia rechazada se quita de B y de su cola');
+  assert.equal(core.store.get('legacy1').profileId, profA.id, 'la nota sigue siendo de A');
+  assert.equal((await pb.evaluate(() => chrome.storage.session.get('conn'))).conn.state, 'online', 'B no pasa a "revocada" ni "sin conexión"');
+  // Copia fantasma ya existente (de una versión anterior): la limpieza única la quita al reiniciar
+  await pb.evaluate((n) => chrome.storage.local.set({ n_legacy1: { ...n, profileId: 'p_otro' }, reconcileV: 0 }), legacyNote);
+  await pb.evaluate(() => chrome.runtime.sendMessage({ type: 'link:restart' }));
+  await until(async () => !(await cacheOf(pb)).n_legacy1, 'la limpieza única quita la copia fantasma');
+  // Una nota local sin perfil adopta el perfil de la extensión
+  await pb.evaluate(() => chrome.storage.local.set({ n_sinperfil: { id: 'sinperfil', title: 'Sin perfil', description: '', url: 'https://example.com/sp', host: 'example.com', scope: 'page', tags: [], color: null, createdAt: 5, updatedAt: 6 } }));
+  await pb.evaluate(() => chrome.runtime.sendMessage({ type: 'link:restart' }));
+  await until(() => core.store.get('sinperfil'), 'la nota sin perfil llega a la app');
+  assert.equal(core.store.get('sinperfil').profileId, profB.id);
+  core.store.remove('sinperfil');
+  await until(async () => !(await cacheOf(pb)).n_sinperfil || true, 'ok');
+
   console.log('5. Dar permiso: B pasa a ver las notas de A, en vivo');
   core.setCanSee(instB.id, [profA.id]);
   await until(async () => (await cacheOf(pb)).n_legacy1, 'nota de A en B tras el permiso');

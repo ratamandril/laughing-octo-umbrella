@@ -25,6 +25,7 @@ Datos en `%APPDATA%\notas-por-url-app` (`notes.json`, `config.json`). Se escribe
 
 ## Papelera y estado
 - Eliminar una nota la manda a la pestaña **Papelera** de la app (30 días); desde ahí se restaura o se elimina para siempre. Las extensiones nunca reciben su contenido.
+- Una nota sin perfil no la ve ninguna extensión: en la pestaña **Notas** se le asigna uno con «Asignar perfil…».
 - El estado (app, internet, nube) se ve en el popup, en cada nota sin subir, en la ventana y en el icono de la bandeja.
 
 Prueba de extremo a extremo (dos Chromium con la extensión real contra la app): `node e2e/extension.e2e.js` (necesita Playwright y Chromium).

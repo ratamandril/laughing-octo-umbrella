@@ -421,6 +421,60 @@ describe('aislamiento entre perfiles', () => {
     }
   });
 
+  test('un perfil vacío (null o "") se completa con el de la extensión, en PUT y en bulk', async () => {
+    const { ctx, a, call } = await setup();
+    try {
+      const put = await call(a, { method: 'PUT', path: '/notes/p1', body: note('p1', { profileId: null }) });
+      assert.equal(put.status, 201);
+      assert.equal(put.json.note.profileId, a.profileId);
+      const bulk = await call(a, { method: 'POST', path: '/notes/bulk', body: { notes: [note('p2', { profileId: null }), note('p3', { profileId: '' })] } });
+      assert.deepEqual([bulk.json.imported, bulk.json.invalid, bulk.json.rejected], [2, 0, []]);
+      assert.equal(ctx.core.store.get('p2').profileId, a.profileId);
+      assert.equal(ctx.core.store.get('p3').profileId, a.profileId);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('bulk avisa qué ids rechazó por ser de otro perfil', async () => {
+    const { ctx, a, b, call } = await setup();
+    try {
+      await call(a, { method: 'PUT', path: '/notes/na', body: note('na') });
+      const bulk = await call(b, { method: 'POST', path: '/notes/bulk', body: { notes: [note('na', { updatedAt: Date.now() + 1000 }), note('nb')] } });
+      assert.equal(bulk.json.imported, 1);
+      assert.deepEqual(bulk.json.rejected, ['na']);
+      assert.equal(ctx.core.store.get('na').profileId, a.profileId); // la nota de A no cambió
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('desde la app se asigna perfil a una nota sin perfil, y solo a esas', async () => {
+    const { ctx, a, b, call } = await setup();
+    try {
+      ctx.core.store.put({ ...note('huerfana'), profileId: null });
+      assert.equal(ctx.core.store.get('huerfana').profileId, null);
+      assert.equal((await call(a, { path: '/notes' })).json.notes.length, 0); // ninguna extensión la ve
+      const cb = connectWs(ctx.port, { origin: ORIGIN_B });
+      await cb.opened;
+      cb.send({ type: 'hello', token: b.token });
+      await cb.waitFor('ready');
+
+      assert.equal(ctx.core.assignNoteProfile('huerfana', 'p_no_existe'), null);
+      assert.ok(ctx.core.assignNoteProfile('huerfana', b.profileId));
+      assert.equal(ctx.core.store.get('huerfana').profileId, b.profileId);
+      assert.deepEqual((await call(b, { path: '/notes' })).json.notes.map((n) => n.id), ['huerfana']);
+      assert.equal((await call(a, { path: '/notes' })).json.notes.length, 0);
+      const live = await cb.waitFor('notes');
+      assert.equal(live.notes[0].id, 'huerfana');
+      // ya tiene perfil: no se reasigna (las extensiones del dueño anterior quedarían con una copia)
+      assert.equal(ctx.core.assignNoteProfile('huerfana', a.profileId), null);
+      cb.close();
+    } finally {
+      await ctx.close();
+    }
+  });
+
   test('los cambios en vivo solo llegan a quien puede verlos', async () => {
     const { ctx, a, b, call } = await setup();
     try {

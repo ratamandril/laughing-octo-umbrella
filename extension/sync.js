@@ -17,6 +17,7 @@ const Sync = (() => {
   let pingTimer = null;
   let retryTimer = null;
   let flushTimer = null;
+  const RECONCILE_V = 1;
   let failures = 0;
   let lastPong = 0;
   let flushing = false;
@@ -59,6 +60,43 @@ const Sync = (() => {
       }
       if (Object.keys(toSet).length) await local.set(toSet);
       if (toRemove.length) await local.remove(toRemove);
+    });
+  }
+
+  // La app dijo que estas notas no pueden estar en este perfil (son de otro): se quitan de la caché y de la cola.
+  // Solo si no se han vuelto a tocar desde que se encolaron (ids → marca de la cola).
+  async function rejectNotes(marks) {
+    const ids = Object.keys(marks);
+    if (!ids.length) return;
+    await withLock(async () => {
+      const { outbox } = await local.get('outbox');
+      if (!outbox) return;
+      const toRemove = [];
+      for (const id of ids) {
+        const entry = outbox.notes[id];
+        if (entry && entry.t === marks[id]) {
+          delete outbox.notes[id];
+          toRemove.push(PREFIX + id);
+        }
+      }
+      if (toRemove.length) await local.remove(toRemove);
+      await local.set({ outbox });
+    });
+  }
+
+  // Notas locales sin perfil (p. ej. importadas antes de elegirlo): pasan a este perfil y se envían
+  async function adoptOrphans(profileId) {
+    await withLock(async () => {
+      const all = await local.get(null);
+      const outbox = { notes: { ...((all.outbox && all.outbox.notes) || {}) }, palette: (all.outbox && all.outbox.palette) || null };
+      const toSet = {};
+      for (const [k, v] of Object.entries(all)) {
+        if (!k.startsWith(PREFIX) || !v || v.profileId) continue;
+        const id = k.slice(PREFIX.length);
+        toSet[k] = { ...v, profileId };
+        outbox.notes[id] = { op: 'put', t: Math.max(Date.now(), ((outbox.notes[id] && outbox.notes[id].t) || 0) + 1) };
+      }
+      if (Object.keys(toSet).length) await local.set({ ...toSet, outbox });
     });
   }
 
@@ -105,10 +143,13 @@ const Sync = (() => {
         return;
       }
 
-      const { syncSeq = 0 } = await local.get('syncSeq');
-      const changes = await Link.request('/notes?since=' + syncSeq);
-      await applyNotes(changes.notes, { full: syncSeq === 0 });
-      await local.set({ syncSeq: changes.seq });
+      await adoptOrphans(me.profile.id);
+      // Una vez por versión de limpieza se hace una sincronización completa: quita las copias que la app no reconoce
+      const { syncSeq = 0, reconcileV = 0 } = await local.get(['syncSeq', 'reconcileV']);
+      const full = syncSeq === 0 || reconcileV < RECONCILE_V;
+      const changes = await Link.request('/notes?since=' + (full ? 0 : syncSeq));
+      await applyNotes(changes.notes, { full });
+      await local.set({ syncSeq: changes.seq, reconcileV: RECONCILE_V });
 
       const [pal, prof] = await Promise.all([Link.request('/palette'), Link.request('/profiles')]);
       if (pal.palette) {
@@ -306,7 +347,9 @@ const Sync = (() => {
     if (puts.length >= BULK_MIN) {
       for (let i = 0; i < puts.length; i += 500) {
         const chunk = puts.slice(i, i + 500);
-        await Link.request('/notes/bulk', { method: 'POST', body: { notes: chunk.map((p) => p.note) }, timeoutMs: 30000 });
+        const res = await Link.request('/notes/bulk', { method: 'POST', body: { notes: chunk.map((p) => p.note) }, timeoutMs: 30000 });
+        const refused = new Set((res && res.rejected) || []);
+        await rejectNotes(Object.fromEntries(chunk.filter((p) => refused.has(p.id)).map((p) => [p.id, p.t])));
         await settle({ notes: Object.fromEntries(chunk.map((p) => [p.id, p.t])) });
       }
     } else {
@@ -318,6 +361,10 @@ const Sync = (() => {
           if (err.status === 400) {
             console.warn('[notas] la app rechazó una nota; se descarta de la cola', p.id, err.code);
             await settle({ notes: { [p.id]: p.t } });
+          } else if (err.code === 'not_found' || err.code === 'profile_not_allowed') {
+            // La nota es de otro perfil (o de uno que no puede ver): no se queda como copia propia
+            console.warn('[notas] esa nota pertenece a otro perfil; se quita de este', p.id);
+            await rejectNotes({ [p.id]: p.t });
           } else {
             throw err;
           }

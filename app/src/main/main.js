@@ -153,6 +153,7 @@ function registerIpc() {
     if (url) clipboard.writeText(url);
     return !!url;
   });
+  ipcMain.handle('notes:assign', (_event, id, profileId) => !!core.assignNoteProfile(str(id), str(profileId)));
   ipcMain.handle('notes:delete', (_event, id) => !!core.deleteNote(str(id)));
   ipcMain.handle('trash:list', () => core.trash());
   ipcMain.handle('trash:restore', (_event, id) => !!core.restoreNote(str(id)));

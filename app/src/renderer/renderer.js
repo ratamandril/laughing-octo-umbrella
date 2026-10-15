@@ -277,10 +277,23 @@ function noteRow(n) {
   const acts = el('span', 'acts');
   const open = el('button', 'link', 'Abrir en su perfil');
   open.disabled = !n.profileId;
+  if (!n.profileId) open.title = 'Esta nota no tiene perfil: asígnale uno para poder abrirla';
   open.addEventListener('click', async () => {
     const res = await window.notasApp.openNote(n.id);
     flash(res.ok ? 'Abriendo…' : openError(res.error), !res.ok);
   });
+  if (!n.profileId && notesData.profiles.length) {
+    const pick = el('select');
+    pick.setAttribute('aria-label', 'Perfil para esta nota');
+    pick.append(new Option('Asignar perfil…', ''), ...notesData.profiles.map((p) => new Option(profileName(p.id), p.id)));
+    pick.addEventListener('change', async () => {
+      if (!pick.value) return;
+      const done = await window.notasApp.assignNoteProfile(n.id, pick.value);
+      flash(done ? 'Perfil asignado.' : 'No se pudo asignar el perfil.', !done);
+      loadNotes();
+    });
+    acts.append(pick);
+  }
   const copy = el('button', 'link', 'Copiar URL');
   copy.addEventListener('click', async () => flash((await window.notasApp.copyNoteUrl(n.id)) ? 'URL copiada.' : 'No se pudo copiar.'));
   const del = el('button', 'danger', 'A la papelera');
