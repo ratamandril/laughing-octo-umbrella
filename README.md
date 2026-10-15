@@ -29,31 +29,13 @@ Sin dependencias ni paso de compilación: son archivos HTML, CSS y JavaScript co
 4. Pulsa **Cargar descomprimida** y elige la carpeta `extension/` (la que contiene `manifest.json`).
 5. Tras cambiar el código, pulsa "Recargar" en la tarjeta de la extensión.
 
-## Sincronización
+## Dónde se guardan las notas
 
-Las notas se guardan con `chrome.storage.sync`: el navegador las sincroniza con la cuenta con la que iniciaste sesión (Google en Chrome, Microsoft en Edge). Sin conexión se guardan en el equipo y se suben al reconectarse.
+Las notas se guardan en la **app de escritorio** (con respaldo opcional en Firestore). La extensión solo mantiene una copia local de lo que la app le entrega y una cola con los cambios aún sin enviar, así que puedes escribir una nota aunque la app esté cerrada y se enviará al reconectar. **Sin haber enlazado la extensión con la app no se pueden crear ni ver notas** (Ajustes → Conexión con la app).
 
-Límites del navegador:
+Cada perfil ve solo sus propias notas; las de otros perfiles se ven desde la app, donde también se da permiso a cada extensión.
 
-| Límite | Valor |
-|---|---|
-| Total | ~100 KB (102 400 bytes) |
-| Por elemento | 8 KB (cada nota es un elemento) |
-| Elementos | 512 |
-| Escrituras | 1 800 por hora, 120 por minuto |
-
-Esto da, en la práctica, unos cientos de notas. Chrome y Edge **no** se sincronizan entre sí. Como respaldo (o para pasar notas de un navegador a otro) usa **Exportar JSON** en la página completa.
-
-### Sincronizar entre equipos con la versión descomprimida
-
-La sincronización es por ID de extensión, y una extensión descomprimida recibe un ID distinto en cada equipo. Para fijarlo, añade una clave al `manifest.json`:
-
-```bash
-openssl genrsa 2048 > key.pem
-openssl rsa -in key.pem -pubout -outform DER | openssl base64 -A
-```
-
-Copia la salida en un campo `"key"` del manifest y usa el mismo valor en todos los equipos. `key.pem` está en `.gitignore`: no lo subas. Esto no se ha probado entre dos equipos.
+Los ajustes de vista (tema, tamaño de letra, etc.) siguen usando `chrome.storage.sync`, es decir, la cuenta del navegador. Las notas de versiones anteriores, que vivían ahí, se conservan como copia y se importan una vez a la app al enlazar (el aviso aparece en Ajustes).
 
 ## Estructura
 
@@ -75,7 +57,7 @@ Todo el acceso a datos pasa por `storage.js`, así que cambiar el almacenamiento
 
 - Solo funciona en páginas `http` y `https`.
 - La URL se guarda sin el fragmento (`#...`) ni la barra final; la parte `?query` sí se conserva.
-- Si se supera la cuota de sincronización, el popup muestra el error en lugar de guardar.
+- Sin enlace con la app no se pueden crear ni ver notas.
 - El menú contextual abre el popup con `chrome.action.openPopup()`; si el navegador no lo permite, se abre una ventana pequeña con el mismo formulario.
 
 ## Licencia

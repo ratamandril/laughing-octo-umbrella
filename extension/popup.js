@@ -95,10 +95,18 @@ async function init() {
   applySettings();
   fillSettingsPanel();
 
+  const linked = !!link;
+  $('#unlinked').hidden = linked;
+  document.querySelector('.p-search').hidden = !linked;
+  $('#listWrap').hidden = !linked;
+
   const ok = tab && NotesStore.isSupported(tab.url);
   $('#pageInfo').textContent = ok ? NotesStore.hostOf(tab.url) : 'Esta pestaña no admite notas (solo páginas http/https).';
-  $('#form').hidden = !ok;
-  if (!ok) return;
+  $('#form').hidden = !ok || !linked;
+  if (!ok || !linked) {
+    $('#filters').hidden = true;
+    return;
+  }
 
   resetForm();
   if (draft) $(draft.field === 'title' ? '#title' : '#description').value = draft.text;
@@ -363,5 +371,6 @@ $('#sRemColor').addEventListener('change', async (e) => {
   if (!editingId) { selectedColor = rememberedColor(); drawSwatches(); }
 });
 $('#optBtn').addEventListener('click', async () => { await openPage('options.html'); window.close(); });
+$('#openLink').addEventListener('click', async () => { await openPage('options.html'); window.close(); });
 
 init();

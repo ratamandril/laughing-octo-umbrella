@@ -9,6 +9,7 @@ let profiles = [];
 async function load() {
   [all, palette, link, profiles, safetyCtx] = await Promise.all([NotesStore.getAll(), NotesStore.getPalette(), NotesStore.getLink(), Link.profiles(), Link.safetyContext()]);
   Link.paintStatus($('#conn'), () => openPage('options.html'));
+  $('#exportBtn').hidden = $('#importBtn').hidden = !link;
   fillFilters();
   render();
 }
@@ -102,6 +103,11 @@ function groupLabel(key) {
 }
 
 function render() {
+  if (!link) {
+    $('#count').textContent = '';
+    $('#list').replaceChildren(el('p', { class: 'muted' }, 'Esta extensión aún no está enlazada con la app. Las notas se guardan en la app: enlázala en Ajustes → Conexión con la app para ver y crear notas.'));
+    return;
+  }
   if (prefs.group === 'profile' && !multi()) prefs.group = 'site';
   const filtered = NotesStore.filter(all, {
     q: $('#search').value, tag: $('#fTag').value, color: $('#fColor').value, scope: $('#fScope').value,

@@ -107,7 +107,7 @@ async function renderLink() {
   const legacy = await NotesStore.getLegacy();
   const hasProfile = !!link.profileId;
   $('#importBox').hidden = !(hasProfile && !legacyImported && legacy.notes.length);
-  $('#importText').textContent = 'Este perfil tiene ' + legacy.notes.length + ' notas guardadas de antes. Impórtalas a la app para compartirlas con tus otros perfiles (se quedan también aquí como copia).';
+  $('#importText').textContent = 'Este perfil tiene ' + legacy.notes.length + ' notas guardadas de antes en la cuenta del navegador. Impórtalas a la app para que pasen a este perfil (quedan también allí como copia). Las que ya haya importado otro perfil de la misma cuenta, la app las ignora.';
 }
 
 $('#pairBtn').addEventListener('click', async () => {
@@ -158,7 +158,7 @@ $('#unpairBtn').addEventListener('click', async () => {
   if (!confirm('¿Desconectar este perfil de la app?' + warn + ' Las notas siguen guardadas en la app.')) return;
   await Link.unlink();
   await renderLink();
-  linkMsg('Desconectada de la app. Las notas siguen guardadas en la app; este perfil vuelve a usar solo las notas de su navegador.');
+  linkMsg('Desconectada de la app. Las notas siguen guardadas en la app; este perfil no mostrará notas hasta que lo enlaces de nuevo.');
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {

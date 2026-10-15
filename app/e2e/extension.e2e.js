@@ -271,6 +271,18 @@ const profiles = {
   assert.ok(!Object.keys(after).some((k) => k.startsWith('n_') || k === 'link'));
   assert.equal(core.registry.listInstances().length, 1); // quedó A (re-emparejada); B se desconectó sola
 
+  console.log('12b. Sin enlace la extensión no guarda notas por su cuenta');
+  const failed = await pb.evaluate(() => NotesStore.save(NotesStore.create({ title: 'x', description: '', url: 'https://example.com/x', scope: 'page', tags: [] })).then(() => null, (e) => e.message));
+  assert.match(failed, /Conecta primero/);
+  const synced = await pb.evaluate(() => chrome.storage.sync.get(null));
+  assert.ok(!Object.keys(synced).some((k) => k.startsWith('n_') && synced[k].title === 'x'), 'nada se escribe en storage.sync');
+  const popupB = await B.context.newPage();
+  await popupB.goto(B.url('popup.html'));
+  await until(async () => !(await popupB.locator('#unlinked').isHidden()), 'el popup pide enlazar con la app');
+  assert.equal(await popupB.locator('#listWrap').isHidden(), true);
+  await popupB.screenshot({ path: path.join(SHOTS, 'popup-sin-enlace.png') });
+  await popupB.close();
+
   assert.deepEqual(errors, [], 'errores en las páginas: ' + errors.join(' | '));
   console.log('\nTODO BIEN');
   await A.context.close();

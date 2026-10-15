@@ -1,13 +1,11 @@
 // Capa de datos compartida (popup, páginas y service worker).
-// Cada nota se guarda en su propia clave "n_<id>" para respetar el límite
-// de 8 KB por elemento de chrome.storage.sync. La paleta y los ajustes
-// van en claves aparte ("palette", "settings").
+// Cada nota se guarda en su propia clave "n_<id>".
 //
-// Dos modos:
-//  - Sin app: todo en chrome.storage.sync (como siempre).
-//  - Conectada a la app (existe "link" en storage.local): las notas y la paleta se leen de una
-//    caché en storage.local. Cada cambio se guarda en la caché y en una cola de salida ("outbox")
-//    que el service worker envía a la app (ver sync.js). Los ajustes siguen en sync.
+// La app es la única fuente de las notas. Esta extensión solo guarda en storage.local:
+//  - una caché de lo que la app le entregó (notas y categorías), y
+//  - una cola de salida ("outbox") con los cambios aún sin enviar, que el service worker envía (ver sync.js).
+// Sin enlace con la app no se pueden crear ni editar notas. Los ajustes de vista siguen en chrome.storage.sync.
+// Las notas de versiones anteriores (que vivían en storage.sync) solo se leen para importarlas a la app.
 const NotesStore = (() => {
   const PREFIX = 'n_';
   const sync = chrome.storage.sync;
@@ -63,7 +61,7 @@ const NotesStore = (() => {
   const withLock = (fn) => (typeof navigator !== 'undefined' && navigator.locks ? navigator.locks.request('notas-outbox', fn) : fn());
 
   async function areaNow() {
-    return (await getLink()) ? chrome.storage.local : sync;
+    return chrome.storage.local;
   }
 
   const nextT = (prev) => Math.max(Date.now(), ((prev && prev.t) || 0) + 1);
@@ -71,14 +69,7 @@ const NotesStore = (() => {
   // Guarda notas y borrados. En modo app también los anota en la cola de salida.
   async function writeNotes({ put = [], del = [], palette = null }) {
     const link = await getLink();
-    if (!link) {
-      const toSet = {};
-      for (const n of put) toSet[PREFIX + n.id] = n;
-      if (palette) toSet.palette = palette;
-      if (Object.keys(toSet).length) await sync.set(toSet);
-      if (del.length) await sync.remove(del.map((id) => PREFIX + id));
-      return;
-    }
+    if (!link) throw new Error('Conecta primero la extensión con la app (Ajustes → Conexión con la app).');
     await withLock(async () => {
       const { outbox: current } = await chrome.storage.local.get('outbox');
       const outbox = { notes: { ...((current && current.notes) || {}) }, palette: (current && current.palette) || null };
