@@ -6,7 +6,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { sanitizeNote, sanitizePalette, parseTags, normalizeUrl } = require('../src/core/sanitize');
 const { Store } = require('../src/core/store');
-const { Registry } = require('../src/core/registry');
+const { Registry, sharingOf } = require('../src/core/registry');
+const { matchesUrl, matchesText, queryNotes } = require('../src/core/query');
 const { Auth } = require('../src/core/auth');
 const { parseLocalState, createProfilesProvider } = require('../src/core/profiles');
 const { createLauncher } = require('../src/core/launcher');
@@ -330,6 +331,83 @@ describe('perfiles y lanzador', () => {
     assert.equal(await none.open({ browser: 'edge', dir: 'Default', url: 'https://a.com' }).catch((e) => e.code), 'browser_not_found');
     const failing = createLauncher({ profiles: { findExecutable: () => 'x' }, spawn: fakeSpawn([], { fail: true }) });
     assert.equal(await failing.open({ browser: 'edge', dir: 'Default', url: 'https://a.com' }).catch((e) => e.code), 'spawn_failed');
+  });
+});
+
+describe('perfiles por correo (registro)', () => {
+  const make = () => new Registry({ dir: tmpDir() });
+
+  test('el mismo correo en otra carpeta es el mismo perfil (otro equipo); el modo por defecto es solo lectura', () => {
+    const reg = make();
+    const first = reg.upsertProfile({ browser: 'edge', dir: 'Profile 1', name: 'Trabajo', email: 'trabajo@x.com' });
+    assert.equal(first.sharing, 'read');
+    const again = reg.upsertProfile({ browser: 'edge', dir: 'Profile 3', name: 'Trabajo', email: 'TRABAJO@x.com' });
+    assert.equal(again.id, first.id);
+    assert.equal(again.dir, 'Profile 3');
+    assert.equal(reg.listProfiles().length, 1);
+  });
+
+  test('la misma carpeta con otro correo no sobrescribe: perfil nuevo y el anterior queda sin vincular', () => {
+    const reg = make();
+    const old = reg.upsertProfile({ browser: 'edge', dir: 'Profile 1', name: 'Trabajo', email: 'trabajo@x.com' });
+    const other = reg.upsertProfile({ browser: 'edge', dir: 'Profile 1', name: 'Estudio', email: 'estudio@x.com' });
+    assert.notEqual(other.id, old.id);
+    assert.equal(old.dir, '');
+    assert.equal(old.email, 'trabajo@x.com'); // conserva su correo
+    assert.equal(other.dir, 'Profile 1');
+    // si luego esa cuenta aparece en otra carpeta, vuelve a vincularse
+    const back = reg.upsertProfile({ browser: 'edge', dir: 'Profile 2', name: 'Trabajo', email: 'trabajo@x.com' });
+    assert.equal(back.id, old.id);
+    assert.equal(old.dir, 'Profile 2');
+  });
+
+  test('sin correo (perfil sin sesión) se reutiliza por carpeta y no se pisa un correo ya guardado', () => {
+    const reg = make();
+    const a = reg.upsertProfile({ browser: 'chrome', dir: 'Default', name: 'Personal', email: 'a@x.com' });
+    const same = reg.upsertProfile({ browser: 'chrome', dir: 'Default', name: 'Personal', email: '' });
+    assert.equal(same.id, a.id);
+    assert.equal(a.email, 'a@x.com');
+    const empty = reg.upsertProfile({ browser: 'chrome', dir: 'Profile 9', name: 'Sin sesión', email: '' });
+    const filled = reg.upsertProfile({ browser: 'chrome', dir: 'Profile 9', name: 'Sin sesión', email: 'z@x.com' });
+    assert.equal(filled.id, empty.id);
+    assert.equal(filled.email, 'z@x.com'); // se completa cuando antes estaba vacío
+  });
+
+  test('modo de compartición: solo valores válidos; lo desconocido cuenta como solo lectura', () => {
+    const reg = make();
+    const p = reg.upsertProfile({ browser: 'chrome', dir: 'Default', name: 'P', email: '' });
+    assert.equal(reg.setProfileSharing(p.id, 'private').sharing, 'private');
+    assert.equal(reg.setProfileSharing(p.id, 'todo'), null);
+    assert.equal(p.sharing, 'private');
+    assert.equal(sharingOf({ sharing: 'raro' }), 'read');
+    assert.equal(sharingOf(null), 'read');
+  });
+});
+
+describe('consultas (query)', () => {
+  const n = (extra) => ({ id: 'x', url: 'https://a.com/p', host: 'a.com', scope: 'page', title: 'Título', description: 'texto', tags: ['uno'], updatedAt: 1, deleted: false, ...extra });
+
+  test('matchesUrl: página exacta (sin # ni barra final) o todo el sitio', () => {
+    assert.equal(matchesUrl(n(), 'https://a.com/p#x'), true);
+    assert.equal(matchesUrl(n(), 'https://a.com/q'), false);
+    assert.equal(matchesUrl(n({ scope: 'domain' }), 'https://a.com/otra'), true);
+    assert.equal(matchesUrl(n({ scope: 'domain' }), 'https://b.com/'), false);
+    assert.equal(matchesUrl(n(), 'no es url'), false);
+  });
+
+  test('matchesText busca en título, descripción, url y etiquetas', () => {
+    assert.ok(matchesText(n(), 'TÍTU'));
+    assert.ok(matchesText(n(), 'uno'));
+    assert.ok(matchesText(n(), 'a.com'));
+    assert.ok(!matchesText(n(), 'zzz'));
+    assert.ok(matchesText(n(), '   '));
+  });
+
+  test('queryNotes: sin borradas, filtros combinados y de más reciente a más antigua', () => {
+    const list = [n({ id: 'a', updatedAt: 1 }), n({ id: 'b', updatedAt: 3 }), n({ id: 'c', updatedAt: 2, deleted: true }), n({ id: 'd', updatedAt: 2, tags: ['otro'] })];
+    assert.deepEqual(queryNotes(list).map((x) => x.id), ['b', 'd', 'a']);
+    assert.deepEqual(queryNotes(list, { tag: 'otro' }).map((x) => x.id), ['d']);
+    assert.deepEqual(queryNotes(list, { url: 'https://a.com/p', q: 'texto' }).map((x) => x.id), ['b', 'd', 'a']);
   });
 });
 

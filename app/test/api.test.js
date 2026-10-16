@@ -2,7 +2,7 @@
 
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { startCore, request, pair, connectWs, ORIGIN_A, ORIGIN_B, sleep } = require('./helpers');
+const { startCore, request, pair, connectWs, ORIGIN_A, ORIGIN_B, sleep, until } = require('./helpers');
 
 const note = (id, extra = {}) => ({ id, url: 'https://example.com/' + id, title: 'T ' + id, ...extra });
 
@@ -369,7 +369,7 @@ describe('papelera', () => {
   });
 });
 
-describe('aislamiento entre perfiles', () => {
+describe('perfiles: cada uno escribe lo suyo y los demás consultan', () => {
   const setup = async () => {
     const ctx = await startCore();
     const a = await pair(ctx, { origin: ORIGIN_A, profile: { browser: 'chrome', dir: 'Default' } }); // Personal
@@ -392,30 +392,139 @@ describe('aislamiento entre perfiles', () => {
     }
   });
 
-  test('cada extensión solo ve, edita, borra y abre lo de su perfil', async () => {
+  test('el flujo de notas trae solo las del propio perfil; las demás se consultan bajo demanda', async () => {
     const { ctx, a, b, call } = await setup();
     try {
       await call(a, { method: 'PUT', path: '/notes/na', body: note('na', { title: 'personal' }) });
       await call(b, { method: 'PUT', path: '/notes/nb', body: note('nb', { title: 'trabajo' }) });
-
       assert.deepEqual((await call(a, { path: '/notes' })).json.notes.map((n) => n.id), ['na']);
       assert.deepEqual((await call(b, { path: '/notes' })).json.notes.map((n) => n.id), ['nb']);
 
-      // no se revela que existe: 404, igual que si no existiera
-      assert.equal((await call(b, { method: 'PUT', path: '/notes/na', body: note('na', { title: 'robada' }) })).status, 404);
-      assert.equal((await call(b, { method: 'DELETE', path: '/notes/na' })).status, 404);
-      assert.equal(ctx.core.store.get('na').title, 'personal');
-      assert.equal((await call(b, { method: 'POST', path: '/open', body: { noteId: 'na' } })).status, 404);
+      // resumen de los demás perfiles (con correo y conteos)
+      const others = (await call(b, { path: '/others?url=' + encodeURIComponent('https://example.com/na') })).json.profiles;
+      assert.equal(others.length, 1);
+      assert.deepEqual([others[0].id, others[0].email, others[0].sharing, others[0].total, others[0].forUrl], [a.profileId, 'a@example.com', 'read', 1, 1]);
+      assert.equal((await call(b, { path: '/others?url=' + encodeURIComponent('https://example.com/otra') })).json.profiles[0].forUrl, 0);
 
-      // tampoco puede crear notas en otro perfil
-      const r = await call(b, { method: 'PUT', path: '/notes/x', body: note('x', { profileId: a.profileId }) });
-      assert.equal(r.status, 403);
+      // notas de otro perfil: con contenido, filtros y páginas
+      const listed = await call(b, { path: `/profiles/${a.profileId}/notes` });
+      assert.deepEqual(listed.json.notes.map((n) => [n.id, n.title]), [['na', 'personal']]);
+      assert.equal((await call(b, { path: `/profiles/${a.profileId}/notes?q=person` })).json.total, 1);
+      assert.equal((await call(b, { path: `/profiles/${a.profileId}/notes?q=zzz` })).json.total, 0);
+      assert.equal((await call(b, { path: `/profiles/${a.profileId}/notes?url=` + encodeURIComponent('https://example.com/na') })).json.total, 1);
+      for (const id of ['n1', 'n2', 'n3']) await call(a, { method: 'PUT', path: '/notes/' + id, body: note(id) });
+      const page = (await call(b, { path: `/profiles/${a.profileId}/notes?limit=2&offset=2` })).json;
+      assert.deepEqual([page.total, page.notes.length, page.offset, page.limit], [4, 2, 2, 2]);
+      assert.equal((await call(b, { path: '/profiles/p_inexistente/notes' })).status, 404);
+      assert.equal((await call(b, { path: `/profiles/${a.profileId}/notes?limit=abc` })).status, 400);
+
+      // búsqueda global: un grupo por perfil con coincidencias (nunca el propio)
+      const found = (await call(b, { path: '/search?q=person' })).json.groups;
+      assert.deepEqual(found.map((g) => [g.profile.id, g.total, g.notes[0].id]), [[a.profileId, 1, 'na']]);
+      assert.deepEqual((await call(b, { path: '/search?q=trabajo' })).json.groups, []);
+      assert.equal((await call(b, { path: '/search' })).status, 400);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('solo el dueño escribe: los demás leen, pero no editan, borran ni crean en su perfil', async () => {
+    const { ctx, a, b, call } = await setup();
+    try {
+      await call(a, { method: 'PUT', path: '/notes/na', body: note('na', { title: 'personal' }) });
+      const put = await call(b, { method: 'PUT', path: '/notes/na', body: note('na', { title: 'robada' }) });
+      assert.deepEqual([put.status, put.json.error], [403, 'read_only']);
+      const del = await call(b, { method: 'DELETE', path: '/notes/na' });
+      assert.deepEqual([del.status, del.json.error], [403, 'read_only']);
+      assert.equal(ctx.core.store.get('na').title, 'personal');
+      assert.equal(ctx.core.store.get('na').deleted, false);
+
+      // tampoco puede crear notas a nombre de otro perfil
+      assert.equal((await call(b, { method: 'PUT', path: '/notes/x', body: note('x', { profileId: a.profileId }) })).status, 403);
       const bulk = await call(b, { method: 'POST', path: '/notes/bulk', body: { notes: [note('na', { updatedAt: Date.now() + 1000 }), note('y', { profileId: a.profileId })] } });
       assert.deepEqual([bulk.json.imported, bulk.json.invalid], [0, 2]);
+
+      // abrir la nota en su perfil sí se puede (es de lectura)
+      assert.equal((await call(b, { method: 'POST', path: '/open', body: { noteId: 'na' } })).status, 200);
+      assert.equal((await call(b, { method: 'POST', path: '/open', body: { url: 'https://a.com', profileId: a.profileId } })).status, 200);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('perfil privado: los demás no ven ni su correo, ni sus notas, ni pueden abrirlas', async () => {
+    const { ctx, a, b, call } = await setup();
+    try {
+      await call(a, { method: 'PUT', path: '/notes/na', body: note('na', { title: 'personal' }) });
+      const cb = connectWs(ctx.port, { origin: ORIGIN_B });
+      await cb.opened;
+      cb.send({ type: 'hello', token: b.token });
+      await cb.waitFor('ready');
+
+      assert.equal((await call(a, { method: 'PUT', path: '/me/sharing', body: { mode: 'secreto' } })).status, 400);
+      assert.equal((await call(a, { method: 'PUT', path: '/me/sharing', body: { mode: 'private' } })).json.profile.sharing, 'private');
+      const live = await until(() => cb.messages.find((m) => m.type === 'profiles'), 'lista de perfiles actualizada');
+      assert.deepEqual(live.profiles.find((p) => p.id === a.profileId), { id: a.profileId, browser: 'chrome', name: 'Personal', sharing: 'private', own: false });
+
+      const other = (await call(b, { path: '/others' })).json.profiles[0];
+      assert.deepEqual(other, { id: a.profileId, browser: 'chrome', name: 'Personal', sharing: 'private', own: false });
+      assert.equal((await call(b, { path: `/profiles/${a.profileId}/notes` })).status, 404);
+      assert.deepEqual((await call(b, { path: '/search?q=person' })).json.groups, []);
+      assert.equal((await call(b, { method: 'POST', path: '/open', body: { noteId: 'na' } })).status, 404);
+      assert.equal((await call(b, { method: 'PUT', path: '/notes/na', body: note('na') })).status, 404);
+      assert.equal((await call(b, { method: 'DELETE', path: '/notes/na' })).status, 404);
       assert.equal((await call(b, { method: 'POST', path: '/open', body: { url: 'https://a.com', profileId: a.profileId } })).status, 404);
 
-      // la lista de perfiles solo trae los visibles
-      assert.deepEqual((await call(b, { path: '/profiles' })).json.registered.map((p) => p.id), [b.profileId]);
+      // y ni siquiera se les avisa de sus cambios
+      const before = cb.messages.filter((m) => m.type === 'others').length;
+      await call(a, { method: 'PUT', path: '/notes/na2', body: note('na2') });
+      await sleep(450);
+      assert.equal(cb.messages.filter((m) => m.type === 'others').length, before);
+      cb.close();
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('perfil con edición permitida: otros editan (sin cambiar de dueño) pero no borran', async () => {
+    const { ctx, a, b, call } = await setup();
+    try {
+      await call(a, { method: 'PUT', path: '/notes/na', body: note('na', { title: 'personal' }) });
+      const ca = connectWs(ctx.port, { origin: ORIGIN_A });
+      await ca.opened;
+      ca.send({ type: 'hello', token: a.token });
+      await ca.waitFor('ready');
+
+      assert.equal(ctx.core.setSharing(a.profileId, 'edit'), true);
+      const edit = await call(b, { method: 'PUT', path: '/notes/na', body: note('na', { title: 'corregida', profileId: b.profileId }) });
+      assert.equal(edit.status, 200);
+      assert.deepEqual([ctx.core.store.get('na').title, ctx.core.store.get('na').profileId], ['corregida', a.profileId]);
+      const live = await ca.waitFor('notes'); // al dueño le llega el cambio en vivo
+      assert.equal(live.notes[0].title, 'corregida');
+
+      const del = await call(b, { method: 'DELETE', path: '/notes/na' });
+      assert.deepEqual([del.status, del.json.error], [403, 'read_only']);
+      assert.equal((await call(b, { method: 'PUT', path: '/notes/nueva', body: note('nueva', { profileId: a.profileId }) })).status, 403);
+      assert.equal(ctx.core.setSharing('p_inexistente', 'edit'), false);
+      ca.close();
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('aviso "otro perfil cambió": sin contenido y solo a quien puede leer ese perfil', async () => {
+    const { ctx, a, b, call } = await setup();
+    try {
+      const cb = connectWs(ctx.port, { origin: ORIGIN_B });
+      await cb.opened;
+      cb.send({ type: 'hello', token: b.token });
+      await cb.waitFor('ready');
+      await call(a, { method: 'PUT', path: '/notes/na', body: note('na', { title: 'personal' }) });
+      const ping = await cb.waitFor('others');
+      assert.deepEqual(ping.profiles, [a.profileId]);
+      assert.ok(!('notes' in ping), 'el aviso no lleva notas');
+      await cb.expectNone('notes');
+      cb.close();
     } finally {
       await ctx.close();
     }
@@ -486,35 +595,6 @@ describe('aislamiento entre perfiles', () => {
       await cb.expectNone('notes');
       ctx.core.deleteNote('na'); // desde la app
       await cb.expectNone('notes');
-      cb.close();
-    } finally {
-      await ctx.close();
-    }
-  });
-
-  test('dar y quitar permiso: ve las notas del otro perfil y se le avisa para resincronizar', async () => {
-    const { ctx, a, b, call } = await setup();
-    try {
-      await call(a, { method: 'PUT', path: '/notes/na', body: note('na', { title: 'personal' }) });
-      const cb = connectWs(ctx.port, { origin: ORIGIN_B });
-      await cb.opened;
-      cb.send({ type: 'hello', token: b.token });
-      await cb.waitFor('ready');
-
-      assert.equal(ctx.core.setCanSee(b.instanceId, [a.profileId, 'p_inexistente']), true);
-      await cb.waitFor('access');
-      const seen = (await call(b, { path: '/notes' })).json.notes.map((n) => n.id);
-      assert.deepEqual(seen.sort(), ['na']);
-      assert.deepEqual((await call(b, { path: '/profiles' })).json.registered.map((p) => p.id).sort(), [a.profileId, b.profileId].sort());
-      assert.equal((await call(b, { method: 'POST', path: '/open', body: { noteId: 'na' } })).status, 200);
-
-      // ahora los cambios de A sí le llegan
-      await call(a, { method: 'PUT', path: '/notes/na2', body: note('na2') });
-      await cb.waitFor('notes');
-
-      ctx.core.setCanSee(b.instanceId, []);
-      assert.deepEqual((await call(b, { path: '/notes' })).json.notes, []);
-      assert.equal((await call(b, { method: 'POST', path: '/open', body: { noteId: 'na' } })).status, 404);
       cb.close();
     } finally {
       await ctx.close();

@@ -144,4 +144,15 @@ function connectWs(port, { origin = ORIGIN_A } = {}) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-module.exports = { ORIGIN_A, ORIGIN_B, DETECTED, tmpDir, fakeProfiles, startCore, request, pair, connectWs, sleep };
+// Espera a que fn() devuelva algo verdadero (y lo devuelve)
+async function until(fn, label = 'condición', ms = 3000) {
+  const end = Date.now() + ms;
+  for (;;) {
+    const value = await fn();
+    if (value) return value;
+    if (Date.now() > end) throw new Error('Tiempo agotado: ' + label);
+    await sleep(25);
+  }
+}
+
+module.exports = { ORIGIN_A, ORIGIN_B, DETECTED, tmpDir, fakeProfiles, startCore, request, pair, connectWs, sleep, until };

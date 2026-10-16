@@ -17,7 +17,7 @@ contextBridge.exposeInMainWorld('notasApp', {
   restoreNote: (id) => ipcRenderer.invoke('trash:restore', id),
   purgeNote: (id) => ipcRenderer.invoke('trash:purge', id),
   emptyTrash: () => ipcRenderer.invoke('trash:empty'),
-  setAccess: (instanceId, ids) => ipcRenderer.invoke('access:set', instanceId, ids),
+  setSharing: (profileId, mode) => ipcRenderer.invoke('profiles:sharing', profileId, mode),
   chooseSyncKey: () => ipcRenderer.invoke('sync:choose-key'),
   syncNow: () => ipcRenderer.invoke('sync:now'),
   disableSync: () => ipcRenderer.invoke('sync:disable'),

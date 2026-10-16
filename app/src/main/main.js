@@ -159,7 +159,7 @@ function registerIpc() {
   ipcMain.handle('trash:restore', (_event, id) => !!core.restoreNote(str(id)));
   ipcMain.handle('trash:purge', (_event, id) => !!core.purgeNote(str(id)));
   ipcMain.handle('trash:empty', () => core.emptyTrash());
-  ipcMain.handle('access:set', (_event, instanceId, ids) => core.setCanSee(str(instanceId), Array.isArray(ids) ? ids.map(str) : []));
+  ipcMain.handle('profiles:sharing', (_event, profileId, mode) => core.setSharing(str(profileId), str(mode)));
   ipcMain.handle('sync:now', () => core.syncNow());
   ipcMain.handle('sync:disable', async () => {
     await core.disableSync();

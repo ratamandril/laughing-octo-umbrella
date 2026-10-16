@@ -160,6 +160,16 @@ describe('sync con Firestore (doble en memoria)', () => {
     await engine.stop();
   });
 
+  test('un perfil de otro equipo (sin carpeta) y su modo de compartición se importan', async () => {
+    const remote = new FakeRemote();
+    const { registry, engine } = mkEngine(tmpDir(), remote);
+    await engine.start();
+    remote.listener.onBatch({ profiles: [{ id: 'p_bbbbbbbbbbbb', browser: 'edge', dir: '', name: 'Trabajo', email: 't@x.com', sharing: 'private' }] });
+    const p = registry.getProfile('p_bbbbbbbbbbbb');
+    assert.deepEqual([p.dir, p.email, p.sharing], ['', 't@x.com', 'private']);
+    await engine.stop();
+  });
+
   test('sin conexión acumula, reintenta y sube todo al volver', async () => {
     const remote = new FakeRemote();
     remote.down = true;

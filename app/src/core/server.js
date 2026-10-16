@@ -14,6 +14,8 @@ const { EventEmitter } = require('node:events');
 const { WebSocketServer } = require('ws');
 const { sanitizeNote } = require('./sanitize');
 const { BROWSERS } = require('./profiles');
+const { queryNotes, isHttpUrl } = require('./query');
+const { SHARING, sharingOf } = require('./registry');
 
 const PROTOCOL = 1;
 const ORIGIN_RE = /^(chrome|moz)-extension:\/\/[a-z0-9-]{8,64}$/i;
@@ -23,6 +25,9 @@ const BULK_MAX_NOTES = 5000;
 const BROADCAST_CHUNK = 500;
 const MAX_SOCKETS_PER_INSTANCE = 8;
 const BROWSER_NAMES = new Set(['chrome', 'edge', 'firefox', 'other']);
+const PAGE_DEFAULT = 20;
+const PAGE_MAX = 50;
+const QUERY_RATE = { windowMs: 10000, max: 80 }; // consultas de otros perfiles por extensión
 
 class HttpError extends Error {
   constructor(status, code, extra) {
@@ -88,6 +93,9 @@ class NotesServer extends EventEmitter {
     this.openLog = [];
     this.cloud = { state: 'disabled', pending: 0, syncedSeq: 0 };
     this.cloudTimer = null;
+    this.pendingOthers = new Set();
+    this.othersTimer = null;
+    this.queryLog = new Map();
     this.keepAlive = null;
 
     this.http = http.createServer((req, res) => {
@@ -110,7 +118,11 @@ class NotesServer extends EventEmitter {
       route('DELETE', /^\/me$/, true, (ctx) => this._unpair(ctx)),
       route('GET', /^\/profiles$/, true, (ctx) => this._profiles(ctx)),
       route('PUT', /^\/me\/profile$/, true, (ctx) => this._setProfile(ctx)),
+      route('PUT', /^\/me\/sharing$/, true, (ctx) => this._setSharing(ctx)),
       route('PATCH', /^\/profiles\/([\w-]{1,64})$/, true, (ctx) => this._renameProfile(ctx)),
+      route('GET', /^\/others$/, true, (ctx) => this._others(ctx)),
+      route('GET', /^\/profiles\/([\w-]{1,64})\/notes$/, true, (ctx) => this._profileNotes(ctx)),
+      route('GET', /^\/search$/, true, (ctx) => this._search(ctx)),
       route('GET', /^\/notes$/, true, (ctx) => this._listNotes(ctx)),
       route('POST', /^\/notes\/bulk$/, true, (ctx) => this._bulk(ctx), BULK_LIMIT),
       route('PUT', /^\/notes\/([\w-]{1,64})$/, true, (ctx) => this._putNote(ctx)),
@@ -138,6 +150,7 @@ class NotesServer extends EventEmitter {
   async stop() {
     if (this.keepAlive) clearInterval(this.keepAlive);
     clearTimeout(this.cloudTimer);
+    clearTimeout(this.othersTimer);
     for (const ws of this.clients) ws.close(1001, 'server_stopping');
     await new Promise((resolve) => {
       this.http.close(() => resolve());
@@ -160,10 +173,11 @@ class NotesServer extends EventEmitter {
   // Para cambios que no vienen de una extensión (p. ej. Firestore): se avisa a todas
   broadcastNotes(notes, exceptInstanceId = null) {
     if (!notes.length) return;
+    this._queueOthers(notes.map((n) => n.profileId)); // los demás perfiles solo reciben un aviso sin contenido
     for (const ws of this.clients) {
       if (!ws.instanceId || ws.instanceId === exceptInstanceId || ws.readyState !== 1) continue;
       const instance = this.registry.getInstance(ws.instanceId);
-      const visible = notes.filter((n) => this._canSee(instance, n)).map(publicNote);
+      const visible = notes.filter((n) => this._isOwn(instance, n)).map(publicNote);
       if (visible.length) this._sendBuffered(ws, JSON.stringify({ type: 'notes', notes: visible, seq: this.store.seq }));
     }
   }
@@ -176,7 +190,7 @@ class NotesServer extends EventEmitter {
     for (const ws of this.clients) {
       if (!ws.instanceId || ws.readyState !== 1) continue;
       const instance = this.registry.getInstance(ws.instanceId);
-      this._sendJson(ws, { type: 'profiles', profiles: this._visibleProfileList(instance) });
+      this._sendJson(ws, { type: 'profiles', profiles: this._profileList(instance) });
     }
   }
 
@@ -186,31 +200,79 @@ class NotesServer extends EventEmitter {
     return ids;
   }
 
-  // ---------- visibilidad: cada extensión ve su perfil y los que se le permitan desde la app ----------
-  _visibleProfiles(instance) {
-    const set = new Set();
-    if (!instance || !instance.profileId) return set;
-    set.add(instance.profileId);
-    for (const id of instance.canSee || []) if (this.registry.getProfile(id)) set.add(id);
-    return set;
+  // ---------- visibilidad ----------
+  // El flujo de notas de cada extensión (GET /notes y el WebSocket) trae SOLO las de su perfil. Las de los demás
+  // perfiles se consultan bajo demanda (/others, /profiles/:id/notes, /search) y solo si ese perfil las comparte.
+  _isOwn(instance, note) {
+    return !!note && !!instance && !!instance.profileId && note.profileId === instance.profileId;
   }
 
-  _canSee(instance, note) {
-    return !!note && !!note.profileId && this._visibleProfiles(instance).has(note.profileId);
+  // ¿Puede esta extensión leer ese perfil? El suyo siempre; los demás, si no son privados
+  _canReadProfile(instance, profileId) {
+    if (!instance || !instance.profileId || !profileId) return false;
+    if (profileId === instance.profileId) return true;
+    const profile = this.registry.getProfile(profileId);
+    return !!profile && sharingOf(profile) !== 'private';
+  }
+
+  _canRead(instance, note) {
+    return !!note && this._canReadProfile(instance, note.profileId);
+  }
+
+  // Escribir: el dueño siempre; otro perfil solo si el dueño permite editar, y nunca borrar
+  _canWrite(instance, note, { remove = false } = {}) {
+    if (this._isOwn(instance, note)) return true;
+    return !remove && this._canRead(instance, note) && sharingOf(this.registry.getProfile(note.profileId)) === 'edit';
   }
 
   _requireProfile(instance) {
     if (!instance.profileId) throw new HttpError(409, 'profile_required');
   }
 
-  _visibleProfileList(instance) {
-    const set = this._visibleProfiles(instance);
-    return this.registry.listProfiles().filter((p) => set.has(p.id));
+  // Cómo ve esta extensión a un perfil: el suyo completo; los demás con lo mínimo (los privados, ni siquiera el correo)
+  _profileView(instance, p) {
+    const sharing = sharingOf(p);
+    if (instance && p.id === instance.profileId) return { ...p, sharing, own: true };
+    if (sharing === 'private') return { id: p.id, browser: p.browser, name: p.name, sharing, own: false };
+    return { id: p.id, browser: p.browser, name: p.name, email: p.email || '', sharing, own: false, unlinked: p.dir === '' };
   }
 
-  // Avisa a una extensión de que cambió lo que puede ver: vuelve a sincronizar desde cero
+  _profileList(instance) {
+    return this.registry.listProfiles().map((p) => this._profileView(instance, p));
+  }
+
+  // Avisa a una extensión de que cambió su flujo de notas: vuelve a sincronizar desde cero
   notifyAccess(instanceId) {
     for (const ws of this.clients) if (ws.instanceId === instanceId) this._sendJson(ws, { type: 'access' });
+  }
+
+  // Aviso sin contenido, "otro perfil cambió", solo a las extensiones que pueden leer ese perfil.
+  // Se agrupan los avisos que llegan seguidos (p. ej. una importación grande).
+  _queueOthers(profileIds) {
+    for (const id of profileIds) if (id) this.pendingOthers.add(id);
+    if (this.othersTimer || !this.pendingOthers.size) return;
+    this.othersTimer = setTimeout(() => this._flushOthers(), 250);
+    if (this.othersTimer.unref) this.othersTimer.unref();
+  }
+
+  _flushOthers() {
+    this.othersTimer = null;
+    const changed = [...this.pendingOthers];
+    this.pendingOthers.clear();
+    for (const ws of this.clients) {
+      if (!ws.instanceId || ws.readyState !== 1) continue;
+      const instance = this.registry.getInstance(ws.instanceId);
+      const ids = changed.filter((id) => instance && id !== instance.profileId && this._canReadProfile(instance, id));
+      if (ids.length) this._sendJson(ws, { type: 'others', profiles: ids });
+    }
+  }
+
+  _throttleQueries(instance) {
+    const now = this.now();
+    const log = (this.queryLog.get(instance.id) || []).filter((t) => now - t < QUERY_RATE.windowMs);
+    if (log.length >= QUERY_RATE.max) throw new HttpError(429, 'too_many_requests');
+    log.push(now);
+    this.queryLog.set(instance.id, log);
   }
 
   // ---------- comprobaciones comunes ----------
@@ -355,7 +417,6 @@ class NotesServer extends EventEmitter {
       browser: instance.browser,
       label: instance.label,
       profile: this.registry.getProfile(instance.profileId),
-      canSee: instance.canSee || [],
       seq: this.store.seq,
       protocol: PROTOCOL,
     });
@@ -369,7 +430,7 @@ class NotesServer extends EventEmitter {
   }
 
   async _profiles(ctx) {
-    return ok({ detected: await this.profiles.detect(), registered: this._visibleProfileList(ctx.instance) });
+    return ok({ detected: await this.profiles.detect(), registered: this._profileList(ctx.instance) });
   }
 
   async _setProfile(ctx) {
@@ -392,6 +453,110 @@ class NotesServer extends EventEmitter {
     return ok({ profile });
   }
 
+  // El dueño del perfil decide cómo lo comparte (desde Ajustes de su extensión o, como respaldo, desde la app)
+  async _setSharing(ctx) {
+    this._requireProfile(ctx.instance);
+    const mode = ctx.body.mode;
+    if (!SHARING.includes(mode)) throw new HttpError(400, 'invalid_sharing');
+    const profile = this.registry.setProfileSharing(ctx.instance.profileId, mode);
+    if (!profile) throw new HttpError(404, 'unknown_profile');
+    await this.registry.flush();
+    this.applySharingChange(profile.id);
+    this.emit('change');
+    return ok({ profile: this._profileView(ctx.instance, profile) });
+  }
+
+  // Tras cambiar el modo de un perfil: las extensiones actualizan su lista y lo que estén mostrando de él
+  applySharingChange(profileId) {
+    this.broadcastProfiles();
+    this._queueOthers([profileId]);
+  }
+
+  _urlParam(ctx) {
+    const raw = ctx.url.searchParams.get('url');
+    if (!raw) return null;
+    if (raw.length > 2048 || !isHttpUrl(raw)) throw new HttpError(400, 'invalid_url');
+    return raw;
+  }
+
+  _textParam(ctx, name, max) {
+    const raw = ctx.url.searchParams.get(name) || '';
+    if (raw.length > max) throw new HttpError(400, 'invalid_' + name);
+    return raw.trim();
+  }
+
+  _pageParams(ctx, defaultLimit = PAGE_DEFAULT) {
+    const num = (name, fallback) => {
+      const raw = ctx.url.searchParams.get(name);
+      if (raw === null) return fallback;
+      const n = Number.parseInt(raw, 10);
+      if (!Number.isInteger(n) || n < 0) throw new HttpError(400, 'invalid_' + name);
+      return n;
+    };
+    return { offset: num('offset', 0), limit: Math.min(Math.max(num('limit', defaultLimit), 1), PAGE_MAX) };
+  }
+
+  _notesByProfile() {
+    const map = new Map();
+    for (const n of this.store.notes.values()) {
+      if (n.deleted || !n.profileId) continue;
+      if (!map.has(n.profileId)) map.set(n.profileId, []);
+      map.get(n.profileId).push(n);
+    }
+    return map;
+  }
+
+  // Resumen de los demás perfiles: cuántas notas tienen y cuántas aplican a la página dada. Los privados, nada.
+  _others(ctx) {
+    this._requireProfile(ctx.instance);
+    this._throttleQueries(ctx.instance);
+    const url = this._urlParam(ctx);
+    const byProfile = this._notesByProfile();
+    const profiles = this.registry.listProfiles()
+      .filter((p) => p.id !== ctx.instance.profileId)
+      .map((p) => {
+        const view = this._profileView(ctx.instance, p);
+        if (view.sharing === 'private') return view;
+        const notes = byProfile.get(p.id) || [];
+        return { ...view, total: notes.length, forUrl: url ? queryNotes(notes, { url }).length : null };
+      });
+    return ok({ profiles });
+  }
+
+  // Notas de un perfil que se puede leer, por páginas. Filtros: url (las que aplican a esa página), q (texto), tag.
+  _profileNotes(ctx) {
+    this._requireProfile(ctx.instance);
+    this._throttleQueries(ctx.instance);
+    const id = ctx.params[0];
+    if (!this.registry.getProfile(id) || !this._canReadProfile(ctx.instance, id)) throw new HttpError(404, 'not_found');
+    const found = queryNotes(this._notesByProfile().get(id) || [], {
+      url: this._urlParam(ctx),
+      q: this._textParam(ctx, 'q', 100),
+      tag: this._textParam(ctx, 'tag', 30),
+    });
+    const { offset, limit } = this._pageParams(ctx);
+    return ok({ total: found.length, offset, limit, notes: found.slice(offset, offset + limit).map(publicNote) });
+  }
+
+  // Búsqueda en los demás perfiles legibles: un grupo por perfil, solo los que tienen coincidencias
+  _search(ctx) {
+    this._requireProfile(ctx.instance);
+    this._throttleQueries(ctx.instance);
+    const q = this._textParam(ctx, 'q', 100);
+    if (!q) throw new HttpError(400, 'invalid_q');
+    const tag = this._textParam(ctx, 'tag', 30);
+    const { limit } = this._pageParams(ctx, 10);
+    const byProfile = this._notesByProfile();
+    const groups = [];
+    for (const p of this.registry.listProfiles()) {
+      if (p.id === ctx.instance.profileId || !this._canReadProfile(ctx.instance, p.id)) continue;
+      const found = queryNotes(byProfile.get(p.id) || [], { q, tag });
+      if (found.length) groups.push({ profile: this._profileView(ctx.instance, p), total: found.length, notes: found.slice(0, limit).map(publicNote) });
+    }
+    groups.sort((a, b) => b.notes[0].updatedAt - a.notes[0].updatedAt);
+    return ok({ groups });
+  }
+
   async _renameProfile(ctx) {
     const name = typeof ctx.body.name === 'string' ? ctx.body.name.trim().slice(0, 60) : '';
     if (!name) throw new HttpError(400, 'invalid_name');
@@ -408,7 +573,7 @@ class NotesServer extends EventEmitter {
     const since = raw === null ? 0 : Number.parseInt(raw, 10);
     if (!Number.isInteger(since) || since < 0) throw new HttpError(400, 'invalid_since');
     this._requireProfile(ctx.instance);
-    const notes = this.store.since(since).filter((n) => this._canSee(ctx.instance, n));
+    const notes = this.store.since(since).filter((n) => this._isOwn(ctx.instance, n));
     return ok({ seq: this.store.seq, notes: notes.map(publicNote) });
   }
 
@@ -425,11 +590,18 @@ class NotesServer extends EventEmitter {
 
     this._requireProfile(ctx.instance);
     const existing = this.store.get(id);
-    if (existing && !this._canSee(ctx.instance, existing)) throw new HttpError(404, 'not_found'); // no se revela lo que no puede ver
-    const asked = body.profileId === undefined || body.profileId === null || body.profileId === '' ? null : String(body.profileId);
-    const profileId = asked || (existing ? existing.profileId : ctx.instance.profileId);
-    this._knownProfileOrThrow(profileId);
-    if (!profileId || !this._visibleProfiles(ctx.instance).has(String(profileId))) throw new HttpError(403, 'profile_not_allowed');
+    let profileId;
+    if (existing && !this._isOwn(ctx.instance, existing)) {
+      // Nota de otro perfil: si es privado no se revela que existe; si se puede leer pero no editar, 403
+      if (!this._canRead(ctx.instance, existing)) throw new HttpError(404, 'not_found');
+      if (!this._canWrite(ctx.instance, existing) || existing.deleted) throw new HttpError(403, 'read_only');
+      profileId = existing.profileId; // se edita sin cambiar de dueño
+    } else {
+      const asked = body.profileId === undefined || body.profileId === null || body.profileId === '' ? null : String(body.profileId);
+      profileId = asked || (existing ? existing.profileId : ctx.instance.profileId);
+      this._knownProfileOrThrow(profileId);
+      if (profileId !== ctx.instance.profileId) throw new HttpError(403, 'profile_not_allowed');
+    }
 
     const result = this.store.put({ ...body, id, profileId });
     if (result.error) throw new HttpError(400, 'invalid_note', { detail: result.error });
@@ -442,7 +614,8 @@ class NotesServer extends EventEmitter {
   _deleteNote(ctx) {
     this._requireProfile(ctx.instance);
     const current = this.store.get(ctx.params[0]);
-    if (!current || !this._canSee(ctx.instance, current)) throw new HttpError(404, 'not_found');
+    if (!current || !this._canRead(ctx.instance, current)) throw new HttpError(404, 'not_found');
+    if (!this._canWrite(ctx.instance, current, { remove: true })) throw new HttpError(403, 'read_only'); // solo borra el dueño
     const note = this.store.remove(ctx.params[0]);
     if (!note) throw new HttpError(404, 'not_found');
     this.broadcastNotes([note], ctx.instance.id);
@@ -455,7 +628,6 @@ class NotesServer extends EventEmitter {
     const list = ctx.body.notes;
     if (!Array.isArray(list) || list.length > BULK_MAX_NOTES) throw new HttpError(400, 'invalid_bulk');
     this._requireProfile(ctx.instance);
-    const allowed = this._visibleProfiles(ctx.instance);
 
     const imported = [];
     let skipped = 0;
@@ -468,8 +640,8 @@ class NotesServer extends EventEmitter {
         continue;
       }
       const prev = this.store.get(check.note.id);
-      if (prev && !this._canSee(ctx.instance, prev)) {
-        invalid++; // ese id pertenece a un perfil que no puede ver
+      if (prev && !this._isOwn(ctx.instance, prev)) {
+        invalid++; // ese id pertenece a otro perfil: aquí no se importa
         rejected.push(check.note.id);
         continue;
       }
@@ -478,7 +650,7 @@ class NotesServer extends EventEmitter {
         continue;
       }
       const profileId = raw.profileId === undefined || raw.profileId === null || raw.profileId === '' ? ctx.instance.profileId : raw.profileId;
-      if (!profileId || !allowed.has(String(profileId))) {
+      if (!profileId || String(profileId) !== ctx.instance.profileId) {
         invalid++;
         rejected.push(check.note.id);
         continue;
@@ -520,13 +692,13 @@ class NotesServer extends EventEmitter {
     if (instance) this._requireProfile(instance);
     if (noteId !== undefined) {
       const note = this.store.get(String(noteId));
-      if (!note || note.deleted || (instance && !this._canSee(instance, note))) throw new HttpError(404, 'not_found');
+      if (!note || note.deleted || (instance && !this._canRead(instance, note))) throw new HttpError(404, 'not_found');
       url = note.url;
       if (profileId === undefined) profileId = note.profileId;
     }
     if (!profileId) throw new HttpError(400, 'no_profile');
     const profile = this.registry.getProfile(String(profileId));
-    if (!profile || (instance && !this._visibleProfiles(instance).has(profile.id))) throw new HttpError(404, 'unknown_profile');
+    if (!profile || (instance && !this._canReadProfile(instance, profile.id))) throw new HttpError(404, 'unknown_profile');
 
     const detected = await this.profiles.detect();
     if (!detected.some((p) => p.browser === profile.browser && p.dir === profile.dir)) {
@@ -609,7 +781,7 @@ class NotesServer extends EventEmitter {
           protocol: PROTOCOL,
           instanceId: instance.id,
           profile: this.registry.getProfile(instance.profileId),
-          profiles: this._visibleProfileList(instance),
+          profiles: this._profileList(instance),
           seq: this.store.seq,
           cloud: this.cloud,
         });
@@ -618,7 +790,7 @@ class NotesServer extends EventEmitter {
           this._sendJson(ws, {
             type: 'catchup',
             seq: this.store.seq,
-            notes: this.store.since(msg.since).filter((n) => this._canSee(instance, n)).map(publicNote),
+            notes: this.store.since(msg.since).filter((n) => this._isOwn(instance, n)).map(publicNote),
             palette: palette && palette.seq > msg.since ? palette : null,
           });
         }

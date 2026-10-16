@@ -139,12 +139,12 @@ function createCore(options = {}) {
     get sync() {
       return sync;
     },
-    // ----- permisos entre perfiles -----
-    setCanSee(instanceId, profileIds) {
-      const ids = Array.isArray(profileIds) ? profileIds.map(String) : [];
-      if (!registry.setInstanceCanSee(instanceId, ids)) return false;
-      server.broadcastProfiles();
-      server.notifyAccess(instanceId); // la extensión se resincroniza con lo que ahora puede ver
+    // ----- cómo comparte cada perfil sus notas -----
+    // Lo normal es que lo cambie la propia extensión (Ajustes); esto es el respaldo desde la app
+    setSharing(profileId, mode) {
+      const profile = registry.setProfileSharing(String(profileId), String(mode));
+      if (!profile) return false;
+      server.applySharingChange(profile.id);
       changed();
       return true;
     },
