@@ -11,17 +11,17 @@ const Link = (() => {
     locked: 'Demasiados intentos fallidos: genera otro código en la app.',
     unauthorized: 'La app ya no reconoce esta extensión. Vuelve a conectarla.',
     origin_mismatch: 'La app asoció este acceso a otra extensión. Vuelve a conectarla.',
-    profile_missing: 'Ese perfil ya no existe en el equipo.',
+    profile_missing: 'El perfil de navegador enlazado a esa cuenta ya no existe en esta PC.',
     browser_not_found: 'No se encontró el navegador de ese perfil en el equipo.',
-    no_profile: 'La nota no tiene un perfil asignado.',
-    unknown_profile: 'La app no conoce el perfil de esa nota.',
+    no_profile: 'La nota no tiene una cuenta asignada.',
+    unknown_profile: 'La app no conoce la cuenta de esa nota.',
     not_found: 'No encontrado en la app.',
     too_many_opens: 'Demasiadas aperturas seguidas. Espera un momento.',
     profile_not_found: 'La app no detecta ese perfil.',
-    read_only: 'Ese perfil comparte sus notas solo para lectura.',
+    read_only: 'Esa cuenta comparte sus notas solo para lectura.',
     too_many_requests: 'Demasiadas consultas seguidas. Espera un momento.',
     invalid_email: 'Ese correo no es válido.',
-    email_in_use: 'Ya hay otro perfil con ese correo.',
+    no_binding: 'Esa cuenta no tiene un perfil de navegador enlazado en esta PC. Enlázalo en la app (sección Cuentas).',
     invalid_sharing: 'Modo de compartición no válido.',
   };
 
@@ -82,6 +82,10 @@ const Link = (() => {
     const res = await request('/pair', { method: 'POST', auth: false, body: { code, browser: browserKind(), label: browserLabel() } });
     await chrome.storage.local.set({ syncSeq: 0, legacyImported: false });
     await save({ token: res.token, instanceId: res.instanceId, browser: browserKind(), profileId: null, pairedAt: Date.now() });
+    try {
+      const me = await request('/me');
+      if (me.profile) await save({ token: res.token, instanceId: res.instanceId, browser: browserKind(), profileId: me.profile.id, pairedAt: Date.now() });
+    } catch { /* la conexión en vivo la completará */ }
     restart();
   }
 
@@ -111,7 +115,9 @@ const Link = (() => {
   const search = (q, { tag, limit } = {}) => request('/search' + query({ q, tag, limit }));
   // Cómo comparte este perfil sus notas: 'private' | 'read' | 'edit'
   const setSharing = (mode) => request('/me/sharing', { method: 'PUT', body: { mode } });
-  const setEmail = (email, merge = false) => request('/me/email', { method: 'PUT', body: { email, merge } });
+  const setEmail = (email) => request('/me/email', { method: 'PUT', body: { email } });
+  const setBinding = (dir) => request('/me/binding', { method: 'PUT', body: { browser: browserKind(), dir } });
+  const clearBinding = () => request('/me/binding', { method: 'DELETE' });
   // Edita una nota de otro perfil (solo si ese perfil lo permite); la app conserva al dueño
   const saveForeign = (note, patch) => request('/notes/' + encodeURIComponent(note.id), {
     method: 'PUT', body: { id: note.id, url: note.url, title: note.title, description: note.description, scope: note.scope, tags: note.tags, color: note.color, ...patch },
@@ -149,7 +155,7 @@ const Link = (() => {
     connecting: 'Conectando con la app…',
     offline: 'Sin conexión con la app: los cambios se guardan y se enviarán al volver',
     revoked: 'La app ya no reconoce esta extensión: vuelve a conectarla en Ajustes',
-    noprofile: 'Falta elegir el perfil de este navegador en Ajustes',
+    noprofile: 'Esta extensión no tiene cuenta: asígnale una en la app',
     unpaired: 'No conectada a la app',
     unknown: '',
   };
@@ -222,5 +228,5 @@ const Link = (() => {
     button.style.cursor = info.action ? 'pointer' : 'default';
   }
 
-  return { paintStatus, statusInfo, noteSafety, safetyContext, BASE, WS_URL, PORT, browserKind, browserLabel, get, save, request, pair, profiles, conn, openNote, others, profileNotes, search, setSharing, setEmail, saveForeign, restart, unlink, STATE_TEXT };
+  return { paintStatus, statusInfo, noteSafety, safetyContext, BASE, WS_URL, PORT, browserKind, browserLabel, get, save, request, pair, profiles, conn, openNote, others, profileNotes, search, setSharing, setEmail, setBinding, clearBinding, saveForeign, restart, unlink, STATE_TEXT };
 })();

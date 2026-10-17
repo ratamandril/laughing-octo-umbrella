@@ -88,24 +88,33 @@ async function renderLink() {
 
   $('#linkState').textContent = Link.STATE_TEXT[c.state] || 'Conectada a la app.';
 
-  // Perfiles detectados por la app para este navegador
+  // Cuenta de esta extensión y su enlace con un perfil de navegador de esta PC
   const sel = $('#profileSel');
   try {
     const res = await Link.request('/profiles');
-    const mine = res.detected.filter((p) => p.browser === Link.browserKind());
-    sel.replaceChildren(new Option('— elige —', ''), ...mine.map((p) => new Option(p.name + (p.email ? ' (' + p.email + ')' : '') + ' — ' + p.dir, p.dir)));
     const current = res.registered.find((p) => p.id === link.profileId);
-    if (current) sel.value = current.dir;
+    $('#noAccount').hidden = !!current;
+    $('#accountBox').hidden = !current;
+    $('#bindBox').hidden = !current;
     $('#sharingBox').hidden = !current;
     $('#emailBox').hidden = !current;
-    if (current && document.activeElement !== $('#emailInput')) $('#emailInput').value = current.email || '';
-    if (current) $('#sharingSel').value = current.sharing || 'read';
+    if (current) {
+      $('#accountName').textContent = current.email ? current.name + ' (' + current.email + ')' : current.name;
+      if (document.activeElement !== $('#nameInput')) $('#nameInput').value = current.name;
+      if (document.activeElement !== $('#emailInput')) $('#emailInput').value = current.email || '';
+      $('#sharingSel').value = current.sharing || 'read';
+      const mine = res.detected.filter((p) => p.browser === Link.browserKind());
+      const options = [new Option('— sin enlace en esta PC —', ''), ...mine.map((p) => new Option(p.name + (p.email ? ' (' + p.email + ')' : '') + ' — ' + p.dir, p.dir))];
+      const b = current.binding;
+      if (b && b.browser !== Link.browserKind()) options.push(new Option('Enlazada a otro navegador (' + b.browser + ' · ' + b.dir + ')', '__other'));
+      sel.replaceChildren(...options);
+      sel.value = !b ? '' : b.browser === Link.browserKind() ? b.dir : '__other';
+    }
     sel.disabled = false;
   } catch (err) {
     sel.replaceChildren(new Option(err.offline ? 'La app no está abierta' : err.message, ''));
     sel.disabled = true;
-    $('#sharingBox').hidden = true;
-    $('#emailBox').hidden = true;
+    for (const id of ['#sharingBox', '#emailBox', '#accountBox', '#bindBox', '#noAccount']) $(id).hidden = true;
   }
 
   // Notas de antes de conectar: se ofrecen una sola vez
@@ -123,7 +132,7 @@ $('#pairBtn').addEventListener('click', async () => {
   try {
     await Link.pair(code);
     $('#code').value = '';
-    linkMsg('Conectada. Ahora elige a qué perfil corresponde este navegador.');
+    linkMsg('Conectada.');
   } catch (err) {
     linkMsg(err.message, true);
   } finally {
@@ -132,44 +141,28 @@ $('#pairBtn').addEventListener('click', async () => {
   renderLink();
 });
 
-$('#saveProfile').addEventListener('click', async () => {
+$('#profileSel').addEventListener('change', async () => {
   const dir = $('#profileSel').value;
-  if (!dir) return linkMsg('Elige un perfil.', true);
+  if (dir === '__other') return;
   try {
-    const res = await Link.request('/me/profile', { method: 'PUT', body: { browser: Link.browserKind(), dir } });
-    const link = await NotesStore.getLink();
-    await Link.save({ ...link, profileId: res.profile.id });
-    await chrome.storage.local.set({ syncSeq: 0 }); // el perfil cambió: se vuelve a sincronizar todo
-    Link.restart(); // empieza a sincronizar las notas de ese perfil
-    linkMsg('Perfil guardado: ' + res.profile.name + '.');
+    if (dir) await Link.setBinding(dir);
+    else await Link.clearBinding();
+    linkMsg(dir ? 'Enlace guardado: los links de la cuenta se abrirán con ese perfil.' : 'Enlace quitado en esta PC.');
   } catch (err) {
     linkMsg(err.message, true);
   }
   renderLink();
 });
 
-async function followProfile(profile) {
-  // La app unió este perfil con otro: la extensión pasa al perfil resultante y se resincroniza
-  const link = await NotesStore.getLink();
-  if (!link || link.profileId === profile.id) return;
-  await Link.save({ ...link, profileId: profile.id });
-  await chrome.storage.local.set({ syncSeq: 0 });
-  Link.restart();
-}
-
 $('#saveEmail').addEventListener('click', async () => {
-  const email = $('#emailInput').value.trim();
   try {
-    let res;
-    try {
-      res = await Link.setEmail(email);
-    } catch (err) {
-      if (err.code !== 'email_in_use') throw err;
-      if (!confirm('Ya existe un perfil con ese correo (de otro equipo o de antes). ¿Unir este perfil con él? Sus notas pasarán a ser de un solo perfil.')) return;
-      res = await Link.setEmail(email, true);
-    }
-    await followProfile(res.profile);
-    linkMsg(res.merged ? 'Perfiles unidos: ahora este navegador usa las notas de ' + email + '.' : email ? 'Correo guardado.' : 'Correo borrado.');
+    const link = await NotesStore.getLink();
+    const name = $('#nameInput').value.trim();
+    const email = $('#emailInput').value.trim();
+    if (!name) return linkMsg('El nombre no puede quedar vacío.', true);
+    await Link.request('/profiles/' + encodeURIComponent(link.profileId), { method: 'PATCH', body: { name } });
+    await Link.setEmail(email);
+    linkMsg('Guardado.');
   } catch (err) {
     linkMsg(err.message, true);
   }

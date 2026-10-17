@@ -31,17 +31,25 @@
     </div>
     <div id="linkOn" hidden>
       <p id="linkState"></p>
-      <div class="field">
-        <label for="profileSel">Este navegador es el perfil…</label>
+      <div class="field" id="accountBox" hidden>
+        <label>Cuenta de esta extensión</label>
+        <strong id="accountName"></strong>
+        <p class="muted">Las notas de esta extensión pertenecen a esa cuenta y viajan con ella a cualquier PC. Para cambiarla, usa la app (Extensiones emparejadas → Cuenta).</p>
+      </div>
+      <p id="noAccount" class="error" hidden>Esta extensión no tiene cuenta. En la app, genera un código eligiendo una cuenta y conéctala de nuevo, o asígnale una en «Extensiones emparejadas».</p>
+      <div class="field" id="bindBox" hidden>
+        <label for="profileSel">En esta PC, los links de la cuenta se abren con este perfil del navegador…</label>
         <select id="profileSel"></select>
+        <p class="muted">Solo vale en esta PC. Sirve para «Abrir en su perfil» desde las notas.</p>
       </div>
       <div class="field" id="emailBox" hidden>
-        <label for="emailInput">Correo de este perfil</label>
+        <label for="nameInput">Nombre y correo de la cuenta</label>
         <div class="row">
-          <input id="emailInput" type="email" placeholder="tucuenta@gmail.com" autocomplete="off" spellcheck="false">
-          <button class="ghost" id="saveEmail">Guardar correo</button>
+          <input id="nameInput" maxlength="60" placeholder="Nombre" autocomplete="off">
+          <input id="emailInput" type="email" placeholder="correo (opcional)" autocomplete="off" spellcheck="false">
+          <button class="ghost" id="saveEmail">Guardar</button>
         </div>
-        <p class="muted">Si el navegador no sabe con qué cuenta usas este perfil (p. ej. una cuenta de Google en Edge), escríbela aquí. Así este perfil se reconoce en otro equipo y sus notas lo siguen.</p>
+        <p class="muted">El correo es solo una etiqueta para que reconozcas la cuenta.</p>
       </div>
       <div class="field" id="sharingBox" hidden>
         <label for="sharingSel">Qué pueden hacer los otros perfiles con mis notas</label>
@@ -53,7 +61,6 @@
         <p class="muted" id="sharingNote">Las notas de otros perfiles se consultan a la app: hace falta tenerla abierta. Tú siempre editas y borras solo las tuyas.</p>
       </div>
       <div class="row">
-        <button class="ghost" id="saveProfile">Guardar perfil</button>
         <button class="ghost danger" id="unpairBtn">Desconectar</button>
       </div>
       <div id="importBox" hidden>

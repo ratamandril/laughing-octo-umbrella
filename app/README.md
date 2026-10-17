@@ -19,13 +19,14 @@ Datos en `%APPDATA%\notas-por-url-app` (`notes.json`, `config.json`). Se escribe
 
 ## Conectar las extensiones
 1. Abre la app y pulsa **Generar código**.
-2. En cada perfil: carga `extension/`, abre **Ajustes → Conexión con la app**, escribe el código y elige a qué perfil corresponde ese navegador.
+2. En la app, **Generar código** eligiendo la **cuenta** (existente o nueva). En cada perfil: carga `extension/`, abre **Ajustes → Conexión con la app** y escribe el código; la extensión queda de esa cuenta. Después, en la misma pantalla, elige con qué perfil de navegador de esta PC se abren los links de la cuenta (enlace local, uno por cuenta).
 3. Si ese perfil ya tenía notas, aparece **Importar a la app** (se importan una sola vez; las originales quedan como copia).
-4. Cada extensión guarda solo las notas de su perfil. Las de los demás perfiles las pide a la app al abrirse (necesita la app abierta); en **Perfiles** puedes escribir el correo de un perfil que el navegador no conoce y, con «Pasar sus notas a…», unir las notas de un perfil con otro (por ejemplo al cambiar de navegador o de equipo); cada perfil elige si es privado, de solo lectura (por defecto) o editable por otros, en Ajustes de la extensión o en **Conexión** de la app. Si la app está cerrada, los cambios se guardan y se envían al volver.
+4. Cada extensión guarda solo las notas de su perfil. Las de los demás perfiles las pide a la app al abrirse (necesita la app abierta); las cuentas son identidades propias (el correo es solo una etiqueta); con «Unir con otra cuenta…» puedes juntar dos cuentas duplicadas; cada cuenta elige si es privado, de solo lectura (por defecto) o editable por otros, en Ajustes de la extensión o en **Conexión** de la app. Si la app está cerrada, los cambios se guardan y se envían al volver.
 
 ## Papelera y estado
 - Eliminar una nota la manda a la pestaña **Papelera** de la app (30 días); desde ahí se restaura o se elimina para siempre. Las extensiones nunca reciben su contenido.
-- Una nota sin perfil no la ve ninguna extensión: en la pestaña **Notas** se le asigna uno con «Asignar perfil…».
+- Una nota sin cuenta no la ve ninguna extensión: en la pestaña **Notas** se le asigna una con «Asignar perfil…». Una extensión sin cuenta no recibe notas hasta que se le asigna una en la app.
+- Mudanza de PC: instala la app, importa de la nube, genera un código eligiendo la cuenta existente y enlaza su perfil de navegador. Las notas viajan con la cuenta, no con el correo ni el navegador.
 - El estado (app, internet, nube) se ve en el popup, en cada nota sin subir, en la ventana y en el icono de la bandeja.
 
 Prueba de extremo a extremo (dos Chromium con la extensión real contra la app): `node e2e/extension.e2e.js` (necesita Playwright y Chromium).

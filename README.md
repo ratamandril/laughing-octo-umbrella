@@ -4,7 +4,7 @@ Extensión para **Edge y Chrome** que funciona como los favoritos de la barra de
 
 Sin dependencias ni paso de compilación: son archivos HTML, CSS y JavaScript con Manifest V3.
 
-> **Modo con app (v1.4):** la carpeta `app/` es una app de escritorio que guarda las notas de todos tus perfiles de Chrome y Edge, las comparte en vivo entre ellos, abre cada nota en su navegador y perfil, y las respalda en Firestore. En **Ajustes → Conexión con la app** se empareja la extensión con un código (una vez por perfil). Sin la app, la extensión funciona sola como antes. Ver `app/README.md`, `docs/protocolo.md` y `docs/firebase.md`.
+> **Modo con app (v1.4):** la carpeta `app/` es una app de escritorio que guarda las notas de todos tus perfiles de Chrome y Edge, las comparte en vivo entre ellos, abre cada nota en su navegador y perfil, y las respalda en Firestore. En **Ajustes → Conexión con la app** se empareja la extensión con un código (una vez por perfil; el código elige la cuenta). Sin la app, la extensión funciona sola como antes. Ver `app/README.md`, `docs/protocolo.md` y `docs/firebase.md`.
 
 ## Qué hace
 

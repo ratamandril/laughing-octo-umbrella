@@ -9,8 +9,8 @@ La app escucha en `http://127.0.0.1:47321` (puerto configurable con `NOTAS_PORT`
 - Salvo `/health` y `/pair`, hay que enviar `Authorization: Bearer <token>`. El token queda atado al Origin con el que se emparejó.
 - Límites: 1 MB por cuerpo (1 KB en `/pair`, 5 MB / 5000 notas en `/notes/bulk`), `/open` 20 por 10 s.
 
-## Emparejar (una vez por perfil)
-1. En la app, "Generar código" → `XXXX-XXXX` (caduca a 5 min, un solo uso, 5 intentos).
+## Emparejar (una vez por extensión)
+1. En la app, "Generar código" eligiendo la **cuenta** (existente o nueva con nombre y correo opcional) → `XXXX-XXXX` (caduca a 5 min, un solo uso, 5 intentos). El código lleva la cuenta: al emparejar, la extensión queda asignada a ella. (En el código y el protocolo, «cuenta» = `profile`.)
 2. `POST /pair {code, browser: "chrome"|"edge"|…, label}` → `201 {token, instanceId, protocol}`.
    Errores: `410 no_active_code`, `401 invalid_code`, `429 locked`.
 3. La extensión guarda el token en `chrome.storage.local`.
@@ -22,9 +22,9 @@ La app escucha en `http://127.0.0.1:47321` (puerto configurable con `NOTAS_PORT`
 | `GET /me` | instancia, perfil asignado y `seq` actual |
 | `DELETE /me` | la extensión se desvincula (revoca su propio token) |
 | `GET /profiles` | `{detected, registered}` (perfiles de Chrome/Edge del equipo) |
-| `PUT /me/profile {browser, dir, name?}` | asigna esta extensión a un perfil detectado |
-| `PATCH /profiles/:id {name}` | renombra un perfil |
-| `PUT /me/email {email, merge?}` | correo del perfil escrito a mano (la detección no lo cambia). Si otro perfil del mismo navegador ya lo tiene → `409 email_in_use`; con `merge:true` se unen: las notas de este pasan al perfil existente, que ocupa su carpeta |
+| `PUT /me/binding {dir}` / `DELETE /me/binding` | enlaza (o quita) la cuenta de esta extensión con un perfil de navegador de esta PC; un solo enlace por cuenta y PC (el último gana). No se sincroniza; solo sirve para «Abrir en su perfil» (`409 no_binding` si falta) |
+| `PATCH /profiles/:id {name}` | renombra la cuenta propia |
+| `PUT /me/email {email}` | correo de la cuenta, solo una etiqueta (vacío lo quita; `400 invalid_email`) |
 | `PUT /me/sharing {sharing}` | el dueño del perfil elige `private`, `read` (por defecto) o `edit` |
 | `GET /others?url=` | resumen de los demás perfiles: `{profiles:[{id, name, email, sharing, total, forUrl}]}`; los privados solo traen `id, browser, name, sharing` |
 | `GET /profiles/:id/notes?url=&q=&tag=&offset=&limit=` | notas de otro perfil, paginadas (20 por defecto, máx. 50) |
@@ -36,10 +36,10 @@ La app escucha en `http://127.0.0.1:47321` (puerto configurable con `NOTAS_PORT`
 | `GET/PUT /palette` | categorías de color (`{list}`) |
 | `POST /open {noteId}` o `{url, profileId}` | abre la URL en el navegador y perfil correctos |
 
-Errores: `{error: "<código>"}` con el estado HTTP correspondiente. Los endpoints de notas devuelven `409 profile_required` mientras la extensión no tenga perfil asignado, `403 profile_not_allowed` si intenta crear una nota para otro perfil, `403 read_only` si la nota es legible pero no editable (o borrarla), `404 not_found` si el perfil es privado, y `409 email_in_use`, `429 too_many_requests` si consulta demasiado (80 por 10 s).
+Errores: `{error: "<código>"}` con el estado HTTP correspondiente. Los endpoints de notas devuelven `409 profile_required` mientras la extensión no tenga cuenta asignada, `403 profile_not_allowed` si intenta crear una nota para otro perfil, `403 read_only` si la nota es legible pero no editable (o borrarla), `404 not_found` si el perfil es privado, `409 no_binding`, `409 profile_missing`, y `429 too_many_requests` si consulta demasiado (80 por 10 s).
 
 ## Visibilidad y papelera
-- **Modelo de lectura compartida.** El feed (`/notes`, WebSocket) trae solo las notas del propio perfil; la extensión solo guarda esas en su caché. Las notas de otros perfiles se piden a la app cuando hacen falta (`/others`, `/profiles/:id/notes`, `/search`) y no se guardan. Cada perfil elige su modo en Ajustes de la extensión (o en la app): `private` (los demás ven solo una fila bloqueada con el nombre), `read` o `edit` (otros pueden editar, nunca borrar). Se identifica el perfil por navegador y correo; si el correo cambia en la misma carpeta se crea un perfil nuevo y el anterior queda sin vincular (`dir:""`).
+- **Modelo de lectura compartida.** El feed (`/notes`, WebSocket) trae solo las notas del propio perfil; la extensión solo guarda esas en su caché. Las notas de otros perfiles se piden a la app cuando hacen falta (`/others`, `/profiles/:id/notes`, `/search`) y no se guardan. Cada perfil elige su modo en Ajustes de la extensión (o en la app): `private` (los demás ven solo una fila bloqueada con el nombre), `read` o `edit` (otros pueden editar, nunca borrar). La cuenta es una identidad propia (`id`, nombre, correo opcional como etiqueta) que no depende del navegador ni de la PC; el enlace con una carpeta de perfil es local y aparte. Dos cuentas se pueden unir a mano desde la app (`mergedInto`).
 - Las notas borradas permanecen en la app (y en Firestore) con `deleted`, `deletedAt` y `purged`; solo se recuperan desde la pestaña **Papelera** de la app y se purgan a los 30 días. Las extensiones nunca reciben el contenido de una nota borrada: solo `{id, profileId, deleted:true, updatedAt, seq}`.
 - Las marcas de borrado antiguas de Firestore que ya perdieron su contenido no se pueden recuperar.
 

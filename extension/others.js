@@ -132,7 +132,6 @@ const Others = (() => {
     function head(p, expanded, interactive) {
       const label = [el('span', { class: 'chev', 'aria-hidden': 'true' }, '▾'), el('span', { class: 'op-name' }, titleOf(p))];
       if (p.email) label.push(el('span', { class: 'op-email muted' }, p.email));
-      if (p.unlinked) label.push(el('span', { class: 'op-email muted' }, '(de otro equipo)'));
       if (p.sharing === 'edit') label.push(el('span', { class: 'op-email muted' }, '· permite editar'));
       label.push(el('span', { class: 'op-count muted' }, p.total !== undefined ? countText(p) : ''));
       return interactive

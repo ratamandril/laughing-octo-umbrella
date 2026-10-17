@@ -39,10 +39,9 @@ function swatchPicker(box, palette, selected, onChange) {
 }
 
 // mode: "simple" | "normal" | "detailed"
-const BROWSER_NAMES = { chrome: 'Chrome', edge: 'Edge' };
 
 function profileLabel(profile, withEmail = false) {
-  return (BROWSER_NAMES[profile.browser] || 'Navegador') + ' · ' + profile.name + (withEmail && profile.email ? ' · ' + profile.email : '');
+  return profile.name + (withEmail && profile.email ? ' · ' + profile.email : '');
 }
 
 // ---------- Menú "Opciones" de cada nota ----------

@@ -74,35 +74,35 @@ const profiles = {
   }));
   await pa.reload();
 
-  async function pairAndAssign(x, page, dir) {
-    await x.context.pages(); // eslint-disable-line no-unused-expressions
+  // La cuenta se elige en la app al generar el código; en la extensión solo se enlaza el perfil de navegador de esta PC
+  async function pairAndAssign(x, page, dir, create) {
     await page.goto(x.url('options.html'));
-    const { code } = core.newPairingCode();
+    const { code } = core.newPairingCode({ create });
     await page.fill('#code', code);
     await page.click('#pairBtn');
     await page.waitForSelector('#linkOn:not([hidden])');
+    await page.waitForSelector('#bindBox:not([hidden])');
     await until(async () => (await page.$$eval('#profileSel option', (o) => o.length)) > 1, 'lista de perfiles');
     await page.selectOption('#profileSel', dir);
-    await page.click('#saveProfile');
-    await page.waitForFunction(() => document.querySelector('#linkMsg').textContent.includes('Perfil guardado'));
+    await page.waitForFunction(() => document.querySelector('#linkMsg').textContent.includes('Enlace guardado'));
   }
 
-  console.log('1. Emparejar y asignar perfil en A');
-  await pairAndAssign(A, pa, 'Default');
+  console.log('1. Emparejar A con una cuenta nueva y enlazar su perfil de navegador');
+  await pairAndAssign(A, pa, 'Default', { name: 'Personal', email: 'a@x.com' });
   const pb = await B.context.newPage();
-  console.log('2. Emparejar y asignar perfil en B');
-  await pairAndAssign(B, pb, 'Profile 1');
+  console.log('2. Emparejar B con otra cuenta');
+  await pairAndAssign(B, pb, 'Profile 1', { name: 'Trabajo', email: 'b@x.com' });
   assert.equal(core.registry.listInstances().length, 2);
 
   console.log('3. Importar las notas de antes de A');
   await pa.waitForSelector('#importBox:not([hidden])');
   await pa.click('#importLegacy');
   await until(() => core.store.get('legacy1'), 'la nota vieja llega a la app');
-  assert.equal(core.store.get('legacy1').profileId, core.registry.listProfiles().find((p) => p.dir === 'Default').id);
+  assert.equal(core.store.get('legacy1').profileId, core.registry.listProfiles().find((p) => p.name === 'Personal').id);
 
   const cacheOf = (page) => page.evaluate(() => chrome.storage.local.get(null));
-  const profA = core.registry.listProfiles().find((p) => p.dir === 'Default');
-  const profB = core.registry.listProfiles().find((p) => p.dir === 'Profile 1');
+  const profA = core.registry.listProfiles().find((p) => p.name === 'Personal');
+  const profB = core.registry.listProfiles().find((p) => p.name === 'Trabajo');
   const instB = core.registry.listInstances().find((i) => i.profileId === profB.id);
 
   console.log('4. Aislamiento: B no ve las notas de A (y A no ve las de B)');
@@ -294,14 +294,14 @@ const profiles = {
   await until(async () => (await popup.locator('#others article').count()) < antes, 'el borrado desde la app llega a otro perfil', 6000);
   console.log('   borrado desde la app visto en otro perfil en', Date.now() - t0, 'ms');
 
-  console.log('7d. Correo escrito a mano en Ajustes');
+  console.log('7d. Nombre y correo de la cuenta en Ajustes');
   await pb.goto(B.url('options.html'));
   await pb.waitForSelector('#emailBox:not([hidden])');
   await pb.fill('#emailInput', 'manual@gmail.com');
   await pb.click('#saveEmail');
-  await pb.waitForFunction(() => document.querySelector('#linkMsg').textContent.includes('Correo guardado'));
+  await pb.waitForFunction(() => document.querySelector('#linkMsg').textContent.includes('Guardado'));
   assert.equal(core.registry.getProfile(profB.id).email, 'manual@gmail.com');
-  assert.equal(core.registry.getProfile(profB.id).emailManual, true);
+  assert.equal(core.registry.getProfile(profB.id).name, 'Trabajo');
   await popup.close();
   await site.close();
   web.closeAllConnections(); await new Promise((r) => web.close(r));
@@ -344,16 +344,27 @@ const profiles = {
   core.revokeInstance(idA);
   await until(async () => (await A.sw.evaluate(() => chrome.storage.session.get('conn'))).conn.state === 'revoked', 'A se entera de la revocación');
   await pa.waitForSelector('#linkWarn:not([hidden])');
-  // Volver a emparejar tras la revocación
-  const again = core.newPairingCode();
+  // Volver a emparejar tras la revocación: el código lleva la cuenta, así que queda conectada sin más pasos
+  const again = core.newPairingCode({ profileId: profA.id });
   await pa.fill('#code', again.code);
   await pa.click('#pairBtn');
-  await until(async () => (await A.sw.evaluate(() => chrome.storage.session.get('conn'))).conn.state === 'noprofile', 'sin perfil la app no entrega notas');
-  await pa.waitForSelector('#linkOn:not([hidden])');
-  await until(async () => (await pa.$$eval('#profileSel option', (o) => o.length)) > 1, 'lista de perfiles');
-  await pa.selectOption('#profileSel', 'Default');
-  await pa.click('#saveProfile');
   await until(async () => (await A.sw.evaluate(() => chrome.storage.session.get('conn'))).conn.state === 'online', 'A vuelve a conectarse');
+  await pa.waitForSelector('#accountBox:not([hidden])');
+  assert.match(await pa.textContent('#accountName'), /Personal/);
+  assert.equal(await pa.inputValue('#profileSel'), 'Default', 'el enlace de la cuenta con este navegador se conserva');
+  // Una extensión emparejada sin cuenta no recibe notas hasta que la app le asigna una
+  const idA2 = core.registry.listInstances().find((i) => i.profileId === profA.id).id; // A y B comparten id de extensión: se distingue por cuenta
+  core.revokeInstance(idA2);
+  await pa.evaluate(() => chrome.runtime.sendMessage({ type: 'link:retry' }));
+  await until(async () => (await A.sw.evaluate(() => chrome.storage.session.get('conn'))).conn.state === 'revoked', 'A se entera de la segunda revocación', 15000);
+  const bare = core.newPairingCode();
+  await pa.fill('#code', bare.code);
+  await pa.click('#pairBtn');
+  await until(async () => (await A.sw.evaluate(() => chrome.storage.session.get('conn'))).conn.state === 'noprofile', 'sin cuenta la app no entrega notas');
+  await pa.waitForSelector('#noAccount:not([hidden])');
+  core.assignInstance(core.registry.listInstances().filter((i) => !i.profileId).pop().id, profA.id);
+  await pa.evaluate(() => chrome.runtime.sendMessage({ type: 'link:retry' }));
+  await until(async () => (await A.sw.evaluate(() => chrome.storage.session.get('conn'))).conn.state === 'online', 'A recibe su cuenta desde la app');
   await pa.screenshot({ path: path.join(SHOTS, 'options-A-repaired.png'), fullPage: true });
 
   console.log('12. Desconectar B limpia su caché y vuelve al modo sin app');
