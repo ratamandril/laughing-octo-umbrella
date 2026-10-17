@@ -34,7 +34,13 @@ function renderPairing(pairing) {
   $('#countdown').textContent = `Caduca en ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
 }
 
-function renderInstances(instances) {
+const SHARING_TEXT = [
+  ['private', 'Privado (los demás no las ven)'],
+  ['read', 'Compartido, solo lectura'],
+  ['edit', 'Compartido, otros pueden editar'],
+];
+
+function renderInstances(instances, current) {
   const list = $('#instances');
   list.replaceChildren();
   $('#noInstances').hidden = instances.length > 0;
@@ -64,24 +70,19 @@ function renderInstances(instances) {
     row.append(dot, info, revoke);
     list.append(row);
 
-    // Permiso para ver notas de otros perfiles (por defecto, ninguno)
-    const others = (current ? current.registeredProfiles : []).filter((p) => p.id !== instance.profileId);
-    if (instance.profileId && others.length) {
+    // Cómo comparte este perfil sus notas con los demás (también se cambia desde Ajustes de la extensión)
+    const reg = current ? current.registeredProfiles.find((p) => p.id === instance.profileId) : null;
+    if (reg) {
       const access = el('div', 'access');
-      access.append(el('span', '', 'Puede ver también las notas de:'));
-      for (const other of others) {
-        const label = el('label');
-        const box = document.createElement('input');
-        box.type = 'checkbox';
-        box.checked = (instance.canSee || []).includes(other.id);
-        box.addEventListener('change', async () => {
-          const ids = [...access.querySelectorAll('input')].filter((i) => i.checked).map((i) => i.dataset.id);
-          await window.notasApp.setAccess(instance.id, ids);
-        });
-        box.dataset.id = other.id;
-        label.append(box, el('span', '', `${BROWSER_NAMES[other.browser] || other.browser} · ${other.name}`));
-        access.append(label);
-      }
+      access.append(el('span', '', 'Notas de este perfil:'));
+      const sel = document.createElement('select');
+      for (const [value, text] of SHARING_TEXT) sel.append(new Option(text, value));
+      sel.value = reg.sharing || 'read';
+      sel.addEventListener('change', async () => {
+        await window.notasApp.setSharing(reg.id, sel.value);
+        refresh();
+      });
+      access.append(sel);
       list.append(access);
     } else if (!instance.profileId) {
       list.append(el('div', 'access', 'Hasta que elija su perfil, esta extensión no recibe notas.'));
@@ -100,6 +101,15 @@ function renderProfiles(detected, registered) {
     info.append(el('div', 'strong', `${BROWSER_NAMES[profile.browser] || profile.browser} · ${profile.name}`));
     info.append(el('div', 'muted', [profile.dir, profile.email].filter(Boolean).join(' · ')));
     row.append(info, el('span', 'tag' + (assigned ? ' ok' : ''), assigned ? 'asignado' : 'libre'));
+    list.append(row);
+  }
+  // Perfiles conocidos que ya no están en este equipo (otro PC, o el perfil cambió de correo)
+  for (const profile of registered.filter((r) => r.dir === '')) {
+    const row = el('div', 'row');
+    const info = el('div', 'grow');
+    info.append(el('div', 'strong', `${BROWSER_NAMES[profile.browser] || profile.browser} · ${profile.name}`));
+    info.append(el('div', 'muted', [profile.email, 'sin vincular en este equipo'].filter(Boolean).join(' · ')));
+    row.append(info, el('span', 'tag', 'sin vincular'));
     list.append(row);
   }
 }
@@ -157,7 +167,7 @@ function render(state) {
   status.textContent = state.running ? `En ejecución · 127.0.0.1:${state.port}` : 'Detenido';
   status.className = 'pill' + (state.running ? ' on' : '');
   renderPairing(state.pairing);
-  renderInstances(state.instances);
+  renderInstances(state.instances, state);
   renderProfiles(state.detectedProfiles, state.registeredProfiles);
   renderSync(state.sync);
   renderCloud(state.sync);
@@ -191,7 +201,7 @@ let notesTimer = null;
 
 function profileName(id) {
   const p = notesData.profiles.find((x) => x.id === id);
-  return p ? `${BROWSER_NAMES[p.browser] || p.browser} · ${p.name}` : 'Sin perfil';
+  return p ? `${BROWSER_NAMES[p.browser] || p.browser} · ${p.name}${p.email ? ' (' + p.email + ')' : ''}${p.dir === '' ? ' · otro equipo' : ''}` : 'Sin perfil';
 }
 
 function scheduleNotes() {

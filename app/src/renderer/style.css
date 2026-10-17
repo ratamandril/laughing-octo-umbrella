@@ -72,3 +72,4 @@ button.danger-ghost { color: var(--danger); }
 .pill.warn { color: #9a6700; border-color: #9a6700; }
 .pill.bad { color: var(--danger); border-color: var(--danger); }
 @media (prefers-color-scheme: dark) { .pill.warn { color: #e3b341; border-color: #e3b341; } }
+.access select { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: .5rem; padding: .2rem .4rem; }
