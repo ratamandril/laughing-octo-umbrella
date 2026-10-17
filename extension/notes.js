@@ -117,7 +117,7 @@ function setNoteView(note, mode) {
 }
 
 // Con una sola persona/perfil visible no hace falta mostrar ni filtrar por perfil
-const multi = () => !!link && profiles.length > 1;
+const multi = () => false; // la caché solo tiene notas propias: no hay filtro ni agrupación por perfil
 
 function groupKey(n) {
   if (prefs.group === 'profile') return 'p:' + (n.profileId || 'none');

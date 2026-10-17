@@ -131,20 +131,24 @@ const profiles = {
   await pb.evaluate(() => chrome.runtime.sendMessage({ type: 'link:restart' }));
   await until(() => core.store.get('sinperfil'), 'la nota sin perfil llega a la app');
   assert.equal(core.store.get('sinperfil').profileId, profB.id);
-  core.store.remove('sinperfil');
+  await pb.evaluate(() => NotesStore.remove('sinperfil'));
   await until(async () => !(await cacheOf(pb)).n_sinperfil || true, 'ok');
 
-  console.log('5. Dar permiso: B pasa a ver las notas de A, en vivo');
-  core.setCanSee(instB.id, [profA.id]);
-  await until(async () => (await cacheOf(pb)).n_legacy1, 'nota de A en B tras el permiso');
-  await pb.evaluate(() => chrome.runtime.sendMessage({ type: 'link:retry' }));
-
-  console.log('6. "Abrir en su perfil" desde el menú de B para la nota de A');
+  console.log('5. Las notas de A se ven en B bajo demanda (la app las sirve), sin guardarse en B');
   await pb.goto(B.url('notes.html'));
-  await pb.waitForSelector('text=Nota vieja de A');
+  await pb.waitForSelector('#others .op');
+  assert.match(await pb.textContent('#others'), /Personal/);
+  assert.match(await pb.textContent('#others'), /a@x\.com/);
+  await pb.click('#others .op-head');
+  await pb.waitForSelector('#others article:has-text("Nota vieja de A")');
+  assert.ok(!(await cacheOf(pb)).n_legacy1, 'la extensión de B no guarda las notas de A');
   await pb.screenshot({ path: path.join(SHOTS, 'notes-B.png'), fullPage: true });
-  const cardA = pb.locator('article:has-text("Nota vieja de A")');
+
+  console.log('6. Solo lectura y "Abrir en su perfil" para la nota de A');
+  const cardA = pb.locator('#others article:has-text("Nota vieja de A")');
   await cardA.locator('.menu-btn').click();
+  assert.equal(await pb.locator('.menu >> text=Editar').count(), 0, 'en solo lectura no se edita');
+  assert.equal(await pb.locator('.menu >> text=Eliminar').count(), 0, 'nunca se elimina lo ajeno');
   await pb.click('.menu >> text=Abrir en su perfil');
   await until(() => launched.length === 1, 'la app lanza el navegador');
   assert.deepEqual(launched[0], { browser: 'chrome', dir: 'Default', url: 'https://example.com/a' });
@@ -154,21 +158,20 @@ const profiles = {
   await pb.keyboard.press('Escape');
   assert.equal(await pb.locator('.menu').count(), 0, 'Esc cierra el menú');
 
-  console.log('7. Filtro por perfil y agrupación en "Todas mis notas"');
-  await pb.selectOption('#fProfile', { label: 'Chrome · Personal' });
-  assert.equal(await pb.locator('article').count(), 1);
-  await pb.selectOption('#fProfile', '');
-  await pb.selectOption('#pGroup', 'profile');
-  assert.equal(await pb.locator('.group-sec').count(), 2);
-  await pb.selectOption('#pGroup', 'site');
+  console.log('7. "Todas mis notas": búsqueda propia y global, grupos y vistas');
+  await pb.fill('#search', 'vieja');
+  assert.equal(await pb.locator('#list article').count(), 0, 'la búsqueda normal solo mira mis notas');
+  await pb.check('#globalSearch');
+  await pb.waitForSelector('#others article:has-text("Nota vieja de A")');
+  await pb.uncheck('#globalSearch');
+  await pb.fill('#search', '');
   await pb.click('#collapseAll');
   assert.equal(await pb.locator('.group-sec.collapsed').count(), await pb.locator('.group-sec').count());
-  await pb.fill('#search', 'vieja');
+  await pb.fill('#search', 'Nota de B');
   assert.equal(await pb.locator('.group-sec:not(.collapsed)').count(), 1, 'al buscar se abren los grupos con resultados');
   await pb.fill('#search', '');
   await pb.click('#expandAll');
   await pb.selectOption('#pView', 'simple');
-  assert.ok((await pb.locator('article.mode-simple').count()) >= 2);
   await pb.reload();
   assert.equal(await pb.inputValue('#pView'), 'simple', 'la vista se recuerda');
   await pb.selectOption('#pView', 'detailed');
@@ -194,10 +197,10 @@ const profiles = {
   assert.equal(await popup.locator('#related article').count(), 2, 'esta página: la de la URL y la del sitio');
   assert.equal(await popup.locator('#allBody').isHidden(), true, 'todas las notas empieza plegada');
   await popup.click('#allHead');
-  assert.equal(await popup.locator('#allNotes article').count(), 2, 'las demás notas (sin repetir las de esta página)');
-  await popup.fill('#search', 'vieja');
-  await until(async () => (await popup.locator('#related article').count()) === 0, 'el buscador vacía la sección de esta página');
-  await until(async () => (await popup.locator('#allNotes article').count()) === 1, 'el buscador filtra las dos secciones');
+  assert.equal(await popup.locator('#allNotes article').count(), 1, 'mis demás notas (sin repetir las de esta página)');
+  await popup.fill('#search', 'este');
+  await until(async () => (await popup.locator('#related article').count()) === 1, 'el buscador filtra la sección de esta página');
+  await until(async () => (await popup.locator('#allNotes article').count()) === 0, 'el buscador filtra todas las notas');
   await popup.fill('#search', '');
   await until(async () => (await popup.locator('#related article').count()) === 2, 'vuelven las notas de esta página');
   await popup.click('#allHead');
@@ -216,6 +219,48 @@ const profiles = {
   core.server.setCloud({ state: 'online', pending: 0, syncedSeq: core.store.seq });
   await until(async () => (await popup.textContent('#conn')).includes('a salvo'), 'todo a salvo');
   await until(async () => (await popup.locator('.safety').count()) === 0, 'sin avisos cuando todo está a salvo');
+
+  console.log('7c. Popup: otros perfiles, búsqueda global, privado, editar y avisos en vivo');
+  await popup.waitForSelector('#others .op');
+  assert.match(await popup.textContent('#others'), /Personal/);
+  await popup.click('#others .op-head');
+  await popup.waitForSelector('#others article:has-text("Nota vieja de A")');
+  await popup.locator('#others article:has-text("Nota vieja de A") .menu-btn').click();
+  assert.equal(await popup.locator('.menu >> text=Editar').count(), 0);
+  assert.equal(await popup.locator('.menu >> text=Abrir en su perfil').count(), 1);
+  await popup.keyboard.press('Escape');
+  await popup.screenshot({ path: path.join(SHOTS, 'popup-otros.png') });
+  // Búsqueda global
+  await popup.fill('#search', 'vieja');
+  await popup.check('#globalSearch');
+  await until(async () => (await popup.locator('#others article:has-text("Nota vieja de A")').count()) === 1 && (await popup.locator('#related article').count()) === 0, 'búsqueda global');
+  await popup.uncheck('#globalSearch');
+  await popup.fill('#search', '');
+  await until(async () => (await popup.locator('#related article').count()) === 2, 'vuelve la vista normal');
+  // Un cambio de A llega a B sin que B toque nada
+  await pa.evaluate(() => NotesStore.save(NotesStore.create({ title: 'Nueva de A', description: 'aviso', url: 'https://example.com/n', scope: 'page', tags: [] })));
+  await popup.waitForSelector('#others article:has-text("Nueva de A")', { timeout: 15000 });
+  // Privado: se ve bloqueado, sin correo ni notas, y el servidor lo niega
+  core.setSharing(profA.id, 'private');
+  await popup.waitForSelector('#others .op.locked');
+  assert.ok(!(await popup.textContent('#others')).includes('a@x.com'), 'un perfil privado no muestra su correo');
+  assert.equal(await popup.locator('#others article').count(), 0);
+  const denied = await pb.evaluate((id) => Link.profileNotes(id, {}).then(() => 'ok', (e) => e.code), profA.id);
+  assert.equal(denied, 'not_found');
+  // Editable: aparece "Editar" y el dueño sigue siendo A
+  core.setSharing(profA.id, 'edit');
+  await popup.waitForSelector('#others .op:not(.locked) .op-head');
+  await popup.click('#others .op-head');
+  await popup.locator('#others article:has-text("Nueva de A") .menu-btn').click();
+  await popup.click('.menu >> text=Editar');
+  assert.match(await popup.textContent('#formTitle'), /Editar nota de/);
+  await popup.fill('#title', 'Nueva de A (editada en B)');
+  await popup.click('#form button[type=submit], #form .primary');
+  const nueva = () => core.store.since(0).find((n) => n.title === 'Nueva de A (editada en B)');
+  await until(nueva, 'la edición de B llega a la app');
+  assert.equal(nueva().profileId, profA.id, 'la nota sigue siendo de A');
+  core.setSharing(profA.id, 'read');
+  await until(async () => (await pa.evaluate(() => chrome.storage.local.get(null)))[`n_${nueva().id}`]?.title === 'Nueva de A (editada en B)', 'A recibe la edición');
   await popup.close();
   await site.close();
   web.closeAllConnections(); await new Promise((r) => web.close(r));
@@ -228,17 +273,25 @@ const profiles = {
   await pp.waitForSelector('#conn:not([hidden])');
   assert.match(await pp.textContent('#conn'), /App cerrada o sin conexión/);
   await pp.close();
+  const ppB = await B.context.newPage();
+  await ppB.goto(B.url('popup.html'));
+  await ppB.waitForFunction(() => document.querySelector('#others')?.textContent.includes('necesitan la app abierta'));
+  await ppB.close();
   await pa.evaluate(() => NotesStore.save(NotesStore.create({ title: 'Escrita sin la app', description: '', url: 'https://example.com/off', scope: 'domain', tags: [] })));
   assert.equal(Object.keys((await cacheOf(pa)).outbox.notes).length, 1);
   core = make();
   await core.start();
   await pa.evaluate(() => chrome.runtime.sendMessage({ type: 'link:retry' }));
-  await until(async () => Object.values(await cacheOf(pb)).find((v) => v && v.title === 'Escrita sin la app'), 'la nota escrita sin la app llega a B', 40000);
+  await until(() => core.store.since(0).some((n) => n.title === 'Escrita sin la app'), 'la nota escrita sin la app llega a la app', 40000);
+  assert.equal(await pb.evaluate((id) => Link.profileNotes(id, { q: 'Escrita' }).then((r) => r.notes.length), profA.id), 1, 'B la ve desde la app');
   assert.ok([...core.store.since(0)].some((n) => n.title === 'Escrita sin la app'));
 
-  console.log('9. Borrar en B se propaga a A');
-  await pb.evaluate(() => NotesStore.remove('legacy1'));
-  await until(async () => !(await cacheOf(pa)).n_legacy1, 'borrado llega a A');
+  console.log('9. B no puede borrar lo de A; A sí borra lo suyo');
+  const delErr = await pb.evaluate(() => Link.request('/notes/legacy1', { method: 'DELETE' }).then(() => 'ok', (e) => e.code));
+  assert.equal(delErr, 'read_only');
+  assert.ok(!core.store.get('legacy1').deleted, 'la nota de A sigue viva');
+  await pa.evaluate(() => NotesStore.remove('legacy1'));
+  await until(() => core.store.get('legacy1').deleted, 'A borra su nota');
 
   console.log('10. Categorías compartidas');
   await pb.evaluate(async () => NotesStore.savePalette([{ id: 'c-x', name: 'Solo B', hex: '#123456', info: '' }]));

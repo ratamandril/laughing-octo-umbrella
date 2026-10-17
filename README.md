@@ -33,7 +33,7 @@ Sin dependencias ni paso de compilación: son archivos HTML, CSS y JavaScript co
 
 Las notas se guardan en la **app de escritorio** (con respaldo opcional en Firestore). La extensión solo mantiene una copia local de lo que la app le entrega y una cola con los cambios aún sin enviar, así que puedes escribir una nota aunque la app esté cerrada y se enviará al reconectar. **Sin haber enlazado la extensión con la app no se pueden crear ni ver notas** (Ajustes → Conexión con la app).
 
-Cada perfil ve solo sus propias notas; las de otros perfiles se ven desde la app, donde también se da permiso a cada extensión.
+Cada perfil guarda y edita solo sus notas; las de los demás se consultan en el popup (necesita la app abierta) y cada perfil decide si las comparte (solo lectura por defecto), las deja editar o las mantiene privadas.
 
 Los ajustes de vista (tema, tamaño de letra, etc.) siguen usando `chrome.storage.sync`, es decir, la cuenta del navegador. Las notas de versiones anteriores, que vivían ahí, se conservan como copia y se importan una vez a la app al enlazar (el aviso aparece en Ajustes).
 
