@@ -21,6 +21,7 @@ const Others = (() => {
     let groups = null;       // resultados de la búsqueda global
     const open = new Set();  // perfiles desplegados
     const bodies = new Map(); // id -> { page, list, total, offset, loading, error }
+    let stale = false;       // el service worker es de una versión anterior (falta recargar la extensión)
     let generation = 0;      // descarta respuestas de consultas ya superadas
 
     const titleOf = (p) => profileLabel(p);
@@ -51,6 +52,7 @@ const Others = (() => {
         }
         state = 'ok';
         errorText = '';
+        try { const ss = await chrome.storage.session.get(['swProto', 'conn']); stale = !ss.swProto && !!ss.conn && ss.conn.state === 'online'; } catch { stale = false; }
       } catch (err) {
         if (gen !== generation) return;
         state = err.offline ? 'offline' : 'error';
@@ -197,6 +199,7 @@ const Others = (() => {
         for (const g of groups) host.box.append(row({ ...g.profile, total: g.total }, { expanded: true, interactive: false }));
       } else {
         if (!summary.length) { host.box.hidden = true; return; }
+        if (stale) host.box.append(el('p', { class: 'error op-state' }, 'La extensión se actualizó pero falta recargarla (botón ⟳ en la página de extensiones del navegador). Hasta entonces los cambios de otros perfiles tardan en verse.'));
         host.box.append(el('h3', { class: 'others-title' }, 'Otros perfiles'));
         const ordered = [...summary].sort((a, b) => (b.forUrl || 0) - (a.forUrl || 0) || (b.total || 0) - (a.total || 0) || a.name.localeCompare(b.name));
         for (const p of ordered) host.box.append(row(p, { expanded: open.has(p.id), interactive: true }));

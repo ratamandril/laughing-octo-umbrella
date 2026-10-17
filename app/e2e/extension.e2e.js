@@ -179,6 +179,16 @@ const profiles = {
   await pb.click('.menu >> text=Vista simple');
   assert.equal(await pb.locator('article:has-text("Nota de B").mode-simple').count(), 1, 'cambia solo esa nota');
 
+  // La página completa también se actualiza al instante (crear en A, borrar desde la app)
+  await pb.click('#others .op-head');
+  await pb.waitForSelector('#others article:has-text("Nota vieja de A")');
+  await pa.evaluate(() => NotesStore.save(NotesStore.create({ title: 'Efímera de A', description: '', url: 'https://example.com/e', scope: 'page', tags: [] })));
+  await pb.waitForSelector('#others article:has-text("Efímera de A")', { timeout: 6000 });
+  const tp = Date.now();
+  core.deleteNote(core.store.since(0).find((n) => n.title === 'Efímera de A').id);
+  await until(async () => (await pb.locator('#others article:has-text("Efímera de A")').count()) === 0, 'la página completa quita la nota borrada desde la app', 6000);
+  console.log('   página completa: borrado visto en', Date.now() - tp, 'ms');
+
   console.log('7b. Popup: secciones desplegables, buscador, menú y estado');
   const web = require('node:http').createServer((req, res) => { res.setHeader('Content-Type', 'text/html'); res.end('<title>Prueba</title><h1>' + req.url + '</h1>'); });
   await new Promise((r) => web.listen(47399, '127.0.0.1', r));
@@ -276,6 +286,13 @@ const profiles = {
   await popup.click('#others .op-head');
   await pa.evaluate((id) => NotesStore.update(id, { title: 'Editada otra vez en A' }), nueva().id);
   await popup.waitForSelector('#others article:has-text("Editada otra vez en A")', { timeout: 15000 });
+
+  // Borrado hecho desde la app: el aviso debe llegar al instante (mucho antes del sondeo de 20 s)
+  const t0 = Date.now();
+  const antes = await popup.locator('#others article').count();
+  core.deleteNote(core.store.since(0).find((n) => n.title === 'Editada otra vez en A').id);
+  await until(async () => (await popup.locator('#others article').count()) < antes, 'el borrado desde la app llega a otro perfil', 6000);
+  console.log('   borrado desde la app visto en otro perfil en', Date.now() - t0, 'ms');
 
   console.log('7d. Correo escrito a mano en Ajustes');
   await pb.goto(B.url('options.html'));

@@ -237,6 +237,7 @@ const Sync = (() => {
               if (link2 && link2.profileId !== msg.profile.id) await Link.save({ ...link2, profileId: msg.profile.id });
             }
             await setCloud(msg.cloud);
+            try { await chrome.storage.session.set({ swProto: 2 }); } catch { /* sin storage.session */ }
             await setConn('online');
             pingTimer = setInterval(ping, PING_MS);
             flush();
