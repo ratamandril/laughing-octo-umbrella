@@ -100,7 +100,7 @@ body.popup {
 .form-mid select { flex:1; min-width:0; margin:0; }
 .form-actions { display:flex; gap:.5rem; align-items:center; }
 .settings { position:absolute; inset:0; z-index:10; background:var(--bg); padding:.8rem; overflow-y:auto; scrollbar-width:thin; }
-.field { display:flex; justify-content:space-between; align-items:center; gap:.7rem; margin-bottom:.8rem; }
+.field { display:flex; justify-content:space-between; align-items:center; gap:.7rem; margin-bottom:.8rem; flex-wrap: wrap;}
 .field > label { flex:1; }
 .field select { width:auto; margin:0; }
 .field.check { justify-content:flex-start; }
@@ -124,7 +124,6 @@ button:focus-visible, .card:focus-visible { outline:2px solid var(--accent); out
 .safety { font-size:.78rem; color:var(--warn); margin-left:.4rem; white-space:nowrap; }
 .conn-line { background:none; border:0; padding:0; margin:.2rem 0 .6rem; color:var(--muted); font-size:.86rem; cursor:pointer; text-align:left; }
 .profile-line { font-size:.82rem; margin:.1rem 0 .3rem; }
-.link-box { max-width:34rem; }
 .link-box .row { align-items:center; }
 .link-box input#code { max-width:12rem; text-transform:uppercase; letter-spacing:.15em; }
 
