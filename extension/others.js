@@ -207,12 +207,11 @@ const Others = (() => {
       if (host.scroller) host.scroller.scrollTop = top;
     }
 
-    // Red de seguridad por si se pierde un aviso (p. ej. el service worker estaba dormido): al volver a la ventana
-    // y cada 20 s mientras la página se ve, se vuelve a preguntar a la app. Es una consulta barata y sin parpadeo.
+    // Al volver a la ventana se vuelve a preguntar una vez (por si la app estuvo cerrada un rato). No hay sondeo:
+    // los cambios llegan por el aviso en vivo de la app.
     const again = () => { if (document.visibilityState === 'visible' && state !== 'idle' && !(typeof menuIsOpen === 'function' && menuIsOpen())) refresh(); };
     document.addEventListener('visibilitychange', again);
     window.addEventListener('focus', again);
-    setInterval(again, 20000);
 
     // Se redibuja con lo que ya hay (p. ej. al cambiar la vista de una nota)
     return { refresh, setQuery, redraw: draw, loadBody };
