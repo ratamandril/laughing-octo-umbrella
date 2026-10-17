@@ -23,12 +23,20 @@
 
   <section class="card">
     <h2>Emparejar una extensión</h2>
-    <p class="muted">En la extensión, abre <b>Ajustes → Conexión con la app</b> y escribe este código. Caduca a los 5 minutos y sirve una sola vez.</p>
+    <p class="muted">Elige la cuenta a la que pertenecerán las notas de esa extensión, genera un código y escríbelo en la extensión (<b>Ajustes → Conexión con la app</b>). Caduca a los 5 minutos y sirve una sola vez.</p>
+    <div class="pair-form">
+      <label>Cuenta <select id="pairAccount"></select></label>
+      <span id="newAccount" class="pair-new" hidden>
+        <input id="newName" maxlength="60" placeholder="Nombre (p. ej. Personal)">
+        <input id="newEmail" type="email" maxlength="254" placeholder="Correo (opcional)">
+      </span>
+    </div>
     <div class="pair-row">
       <button id="newCode" class="primary">Generar código</button>
       <button id="cancelCode" class="ghost" hidden>Cancelar</button>
     </div>
     <div id="codeBox" class="code-box" hidden>
+      <div id="codeFor" class="muted"></div>
       <div id="code" class="code" aria-live="polite"></div>
       <div id="countdown" class="muted"></div>
     </div>
@@ -41,9 +49,10 @@
   </section>
 
   <section class="card">
-    <h2>Perfiles detectados en este equipo</h2>
+    <h2>Cuentas</h2>
+    <p class="muted">Las notas pertenecen a una cuenta y viajan con ella a cualquier PC. «Se abre con» dice qué perfil de navegador de este equipo abre los links de esa cuenta (solo vale en esta PC).</p>
     <div id="profiles" class="list"></div>
-    <p id="noProfiles" class="muted" hidden>No se encontraron perfiles de Chrome ni de Edge.</p>
+    <p id="noProfiles" class="muted" hidden>Todavía no hay cuentas: se crean al emparejar una extensión.</p>
   </section>
 
   <section class="card">

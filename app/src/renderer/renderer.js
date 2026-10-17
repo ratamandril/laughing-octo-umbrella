@@ -30,9 +30,29 @@ function renderPairing(pairing) {
   box.hidden = !pairing;
   if (!pairing) return;
   $('#code').textContent = pairing.code;
+  const target = pairing.profileId && current ? current.registeredProfiles.find((p) => p.id === pairing.profileId) : null;
+  $('#codeFor').textContent = target ? `Para la cuenta «${target.name}»` : pairing.create ? `Para una cuenta nueva: «${pairing.create.name}»` : '';
   const left = Math.max(0, Math.round((pairing.expiresAt - Date.now()) / 1000));
   $('#countdown').textContent = `Caduca en ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
 }
+
+const NEW_ACCOUNT = '__new';
+let pairOptionsSig = '';
+// Lista de cuentas para elegir al generar el código; no se rehace si no cambió (para no cerrar el desplegable)
+function renderPairForm(state) {
+  const sel = $('#pairAccount');
+  const sig = JSON.stringify(state.registeredProfiles.map((p) => [p.id, p.name, p.email]));
+  if (sig !== pairOptionsSig) {
+    const keep = sel.value;
+    pairOptionsSig = sig;
+    sel.replaceChildren(...state.registeredProfiles.map((p) => new Option(accountLabel(p), p.id)), new Option('Nueva cuenta…', NEW_ACCOUNT));
+    const known = [...sel.options].some((o) => o.value === keep);
+    sel.value = known ? keep : (state.registeredProfiles[0] ? state.registeredProfiles[0].id : NEW_ACCOUNT);
+  }
+  $('#newAccount').hidden = sel.value !== NEW_ACCOUNT;
+}
+
+const accountLabel = (p) => (p.email ? `${p.name} (${p.email})` : p.name);
 
 const SHARING_TEXT = [
   ['private', 'Privado (los demás no las ven)'],
@@ -51,9 +71,7 @@ function renderInstances(instances, current) {
 
     const info = el('div', 'grow');
     const profile = instance.profile;
-    const title = profile
-      ? `${BROWSER_NAMES[profile.browser] || 'Navegador'} · ${profile.name}`
-      : `${BROWSER_NAMES[instance.browser] || 'Navegador'} · sin perfil asignado`;
+    const title = `${BROWSER_NAMES[instance.browser] || 'Navegador'} · ${profile ? profile.name : 'sin cuenta asignada'}`;
     info.append(el('div', 'strong', title));
     const detail = [profile && profile.email, instance.online ? 'conectada' : `última vez ${ago(instance.lastSeen)}`]
       .filter(Boolean)
@@ -70,82 +88,116 @@ function renderInstances(instances, current) {
     row.append(dot, info, revoke);
     list.append(row);
 
-    // Cómo comparte este perfil sus notas con los demás (también se cambia desde Ajustes de la extensión)
-    const reg = current ? current.registeredProfiles.find((p) => p.id === instance.profileId) : null;
-    if (reg) {
-      const access = el('div', 'access');
-      access.append(el('span', '', 'Notas de este perfil:'));
-      const sel = document.createElement('select');
-      for (const [value, text] of SHARING_TEXT) sel.append(new Option(text, value));
-      sel.value = reg.sharing || 'read';
-      sel.addEventListener('change', async () => {
-        await window.notasApp.setSharing(reg.id, sel.value);
-        refresh();
-      });
-      access.append(sel);
-      list.append(access);
-    } else if (!instance.profileId) {
-      list.append(el('div', 'access', 'Hasta que elija su perfil, esta extensión no recibe notas.'));
-    }
-  }
-}
-
-function renderProfiles(detected, registered) {
-  const list = $('#profiles');
-  list.replaceChildren();
-  $('#noProfiles').hidden = detected.length > 0 || registered.length > 0;
-  // Perfiles detectados que aún nadie usa
-  for (const profile of detected) {
-    if (registered.some((r) => r.browser === profile.browser && r.dir === profile.dir)) continue;
-    const row = el('div', 'row');
-    const info = el('div', 'grow');
-    info.append(el('div', 'strong', `${BROWSER_NAMES[profile.browser] || profile.browser} · ${profile.name}`));
-    info.append(el('div', 'muted', [profile.dir, profile.email].filter(Boolean).join(' · ')));
-    row.append(info, el('span', 'tag', 'libre'));
-    list.append(row);
-  }
-  // Perfiles conocidos: correo (se puede escribir a mano) y unión de notas con otro perfil
-  const withNotes = new Set(notesData.notes.map((n) => n.profileId));
-  for (const profile of registered) {
-    const unlinked = profile.dir === '';
-    if (unlinked && !withNotes.has(profile.id) && !profile.email) continue;
-    const row = el('div', 'row');
-    const info = el('div', 'grow');
-    info.append(el('div', 'strong', `${BROWSER_NAMES[profile.browser] || profile.browser} · ${profile.name}`));
-    info.append(el('div', 'muted', [unlinked ? 'sin vincular en este equipo' : profile.dir, profile.email || 'sin correo'].join(' · ')));
-
-    const mail = document.createElement('input');
-    mail.type = 'email';
-    mail.placeholder = 'Correo de este perfil';
-    mail.value = profile.email || '';
-    mail.className = 'mini-input';
-    const save = el('button', 'ghost', 'Guardar correo');
-    save.addEventListener('click', async () => {
-      const r = await window.notasApp.setEmail(profile.id, mail.value.trim());
-      if (r && r.error === 'email_in_use') {
-        flash('Ya hay otro perfil con ese correo. Usa «Pasar sus notas a…» para unirlos.', true);
-      } else if (r && r.error) flash('Correo no válido.', true);
-      refresh();
-    });
-    const move = document.createElement('select');
-    move.className = 'mini-input';
-    move.append(new Option('Pasar sus notas a…', ''));
-    for (const other of registered.filter((o) => o.id !== profile.id)) {
-      move.append(new Option(`${BROWSER_NAMES[other.browser] || other.browser} · ${other.name}${other.email ? ' (' + other.email + ')' : ''}`, other.id));
-    }
-    move.addEventListener('change', async () => {
-      if (!move.value) return;
-      const target = registered.find((o) => o.id === move.value);
-      if (confirm(`¿Pasar todas las notas de «${profile.name}» a «${target.name}»? Sus extensiones pasarán a ese perfil.`)) {
-        await window.notasApp.mergeProfiles(profile.id, move.value);
+    // Cuenta de esta extensión (se puede cambiar sin volver a emparejar)
+    const access = el('div', 'access');
+    access.append(el('span', '', 'Cuenta:'));
+    const sel = document.createElement('select');
+    if (!instance.profileId) sel.append(new Option('— sin cuenta —', ''));
+    for (const p of current.registeredProfiles) sel.append(new Option(accountLabel(p), p.id));
+    sel.value = instance.profileId || '';
+    sel.addEventListener('change', async () => {
+      if (!sel.value) return;
+      const target = current.registeredProfiles.find((p) => p.id === sel.value);
+      if (window.confirm(`¿Pasar esta extensión a la cuenta «${target.name}»? Mostrará y guardará las notas de esa cuenta.`)) {
+        await window.notasApp.assignInstance(instance.id, sel.value);
       }
       refresh();
     });
-    const tools = el('div', 'access');
-    tools.append(mail, save, move);
-    info.append(tools);
-    row.append(info, el('span', 'tag' + (unlinked ? '' : ' ok'), unlinked ? 'sin vincular' : 'asignado'));
+    access.append(sel);
+    if (!instance.profileId) access.append(el('span', '', 'Hasta que tenga una cuenta no recibe notas.'));
+    list.append(access);
+  }
+}
+
+let accountsSig = '';
+function renderProfiles(detected, registered) {
+  // Solo se redibuja si cambió algo: así no se borra lo que se esté escribiendo
+  const sig = JSON.stringify([detected, registered]);
+  if (sig === accountsSig) return;
+  accountsSig = sig;
+  const list = $('#profiles');
+  list.replaceChildren();
+  $('#noProfiles').hidden = registered.length > 0;
+  for (const profile of registered) {
+    const row = el('div', 'row');
+    const info = el('div', 'grow');
+    info.append(el('div', 'strong', profile.name));
+    info.append(el('div', 'muted', [profile.email || 'sin correo', `${profile.notes} ${profile.notes === 1 ? 'nota' : 'notas'}`, `${profile.instances} ${profile.instances === 1 ? 'extensión' : 'extensiones'}`].join(' · ')));
+    row.append(info);
     list.append(row);
+
+    // Nombre y correo
+    const edit = el('div', 'access');
+    const name = document.createElement('input');
+    name.value = profile.name;
+    name.maxLength = 60;
+    name.placeholder = 'Nombre';
+    name.className = 'mini-input';
+    const mail = document.createElement('input');
+    mail.type = 'email';
+    mail.value = profile.email || '';
+    mail.placeholder = 'Correo (opcional)';
+    mail.className = 'mini-input';
+    const save = el('button', 'ghost', 'Guardar');
+    save.addEventListener('click', async () => {
+      const r = await window.notasApp.updateProfile(profile.id, { name: name.value.trim(), email: mail.value.trim() });
+      if (r && r.error) flash('Revisa el nombre y el correo.', true);
+      accountsSig = '';
+      refresh();
+    });
+    edit.append(name, mail, save);
+    list.append(edit);
+
+    // Con qué perfil de navegador de esta PC se abren sus links
+    const open = el('div', 'access');
+    open.append(el('span', '', 'Se abre con:'));
+    const bind = document.createElement('select');
+    bind.append(new Option('— sin enlace en esta PC —', ''));
+    for (const d of detected) {
+      const owner = d.boundTo && d.boundTo !== profile.id ? registered.find((r) => r.id === d.boundTo) : null;
+      bind.append(new Option(`${BROWSER_NAMES[d.browser] || d.browser} · ${d.name}${d.email ? ' (' + d.email + ')' : ''}${owner ? ' · ahora de «' + owner.name + '»' : ''}`, `${d.browser}|${d.dir}`));
+    }
+    bind.value = profile.binding ? `${profile.binding.browser}|${profile.binding.dir}` : '';
+    bind.addEventListener('change', async () => {
+      const [browser, dir] = bind.value ? bind.value.split('|') : ['', ''];
+      const taken = dir ? detected.find((d) => d.browser === browser && d.dir === dir && d.boundTo && d.boundTo !== profile.id) : null;
+      if (taken && !window.confirm('Ese perfil de navegador ya está enlazado a otra cuenta. ¿Pasarlo a esta?')) { accountsSig = ''; refresh(); return; }
+      await window.notasApp.bindProfile(profile.id, browser, dir);
+      accountsSig = '';
+      refresh();
+    });
+    open.append(bind);
+
+    // Cómo comparte sus notas con las demás cuentas
+    open.append(el('span', '', 'Notas:'));
+    const share = document.createElement('select');
+    for (const [value, text] of SHARING_TEXT) share.append(new Option(text, value));
+    share.value = profile.sharing || 'read';
+    share.addEventListener('change', async () => {
+      await window.notasApp.setSharing(profile.id, share.value);
+      refresh();
+    });
+    open.append(share);
+    list.append(open);
+
+    // Unir con otra cuenta (p. ej. dos cuentas que en realidad son la misma)
+    if (registered.length > 1) {
+      const join = el('div', 'access');
+      const move = document.createElement('select');
+      move.append(new Option('Unir con otra cuenta…', ''));
+      for (const other of registered.filter((o) => o.id !== profile.id)) move.append(new Option(accountLabel(other), other.id));
+      move.addEventListener('change', async () => {
+        if (!move.value) return;
+        const target = registered.find((o) => o.id === move.value);
+        if (window.confirm(`¿Unir «${profile.name}» con «${target.name}»? Todas sus notas y extensiones pasarán a «${target.name}» y «${profile.name}» dejará de existir.`)) {
+          await window.notasApp.mergeProfiles(profile.id, move.value);
+        }
+        accountsSig = '';
+        refresh();
+      });
+      join.append(move);
+      list.append(join);
+    }
   }
 }
 
@@ -202,6 +254,7 @@ function render(state) {
   status.textContent = state.running ? `En ejecución · 127.0.0.1:${state.port}` : 'Detenido';
   status.className = 'pill' + (state.running ? ' on' : '');
   renderPairing(state.pairing);
+  renderPairForm(state);
   renderInstances(state.instances, state);
   renderProfiles(state.detectedProfiles, state.registeredProfiles);
   renderSync(state.sync);
@@ -236,7 +289,7 @@ let notesTimer = null;
 
 function profileName(id) {
   const p = notesData.profiles.find((x) => x.id === id);
-  return p ? `${BROWSER_NAMES[p.browser] || p.browser} · ${p.name}${p.email ? ' (' + p.email + ')' : ''}${p.dir === '' ? ' · otro equipo' : ''}` : 'Sin perfil';
+  return p ? accountLabel(p) : 'Sin cuenta';
 }
 
 function scheduleNotes() {
@@ -253,7 +306,7 @@ async function loadNotes() {
 function fillNoteFilters() {
   const fp = $('#fProfile');
   const curP = fp.value;
-  fp.replaceChildren(new Option('Todos los perfiles', ''), ...notesData.profiles.map((p) => new Option(profileName(p.id), p.id)), new Option('Sin perfil', 'none'));
+  fp.replaceChildren(new Option('Todas las cuentas', ''), ...notesData.profiles.map((p) => new Option(profileName(p.id), p.id)), new Option('Sin cuenta', 'none'));
   fp.value = [...fp.options].some((o) => o.value === curP) ? curP : '';
   const ft = $('#fTag');
   const curT = ft.value;
@@ -330,7 +383,7 @@ function noteRow(n) {
   if (!n.profileId && notesData.profiles.length) {
     const pick = el('select');
     pick.setAttribute('aria-label', 'Perfil para esta nota');
-    pick.append(new Option('Asignar perfil…', ''), ...notesData.profiles.map((p) => new Option(profileName(p.id), p.id)));
+    pick.append(new Option('Asignar cuenta…', ''), ...notesData.profiles.map((p) => new Option(profileName(p.id), p.id)));
     pick.addEventListener('change', async () => {
       if (!pick.value) return;
       const done = await window.notasApp.assignNoteProfile(n.id, pick.value);
@@ -423,8 +476,18 @@ async function refresh() {
   render(await window.notasApp.getState());
 }
 
+$('#pairAccount').addEventListener('change', () => { $('#newAccount').hidden = $('#pairAccount').value !== NEW_ACCOUNT; });
 $('#newCode').addEventListener('click', async () => {
-  await window.notasApp.newPairingCode();
+  const choice = $('#pairAccount').value;
+  if (choice === NEW_ACCOUNT) {
+    const name = $('#newName').value.trim();
+    if (!name) return flash('Escribe un nombre para la cuenta nueva.', true);
+    await window.notasApp.newPairingCode({ create: { name, email: $('#newEmail').value.trim() } });
+    $('#newName').value = '';
+    $('#newEmail').value = '';
+  } else {
+    await window.notasApp.newPairingCode({ profileId: choice });
+  }
   refresh();
 });
 $('#cancelCode').addEventListener('click', async () => {

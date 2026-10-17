@@ -74,3 +74,6 @@ button.danger-ghost { color: var(--danger); }
 @media (prefers-color-scheme: dark) { .pill.warn { color: #e3b341; border-color: #e3b341; } }
 .access select { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: .5rem; padding: .2rem .4rem; }
 .mini-input { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: .5rem; padding: .2rem .4rem; max-width: 16rem; }
+.pair-form { display: flex; flex-wrap: wrap; gap: .5rem .8rem; align-items: center; margin: .6rem 0 .2rem; }
+.pair-form select, .pair-form input { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: .5rem; padding: .3rem .5rem; }
+.pair-new { display: inline-flex; flex-wrap: wrap; gap: .5rem; }
