@@ -117,7 +117,8 @@ class NotesServer extends EventEmitter {
       route('GET', /^\/me$/, true, (ctx) => this._me(ctx)),
       route('DELETE', /^\/me$/, true, (ctx) => this._unpair(ctx)),
       route('GET', /^\/profiles$/, true, (ctx) => this._profiles(ctx)),
-      route('PUT', /^\/me\/profile$/, true, (ctx) => this._setProfile(ctx)),
+      route('PUT', /^\/me\/binding$/, true, (ctx) => this._setBinding(ctx)),
+      route('DELETE', /^\/me\/binding$/, true, (ctx) => this._clearBinding(ctx)),
       route('PUT', /^\/me\/email$/, true, (ctx) => this._setEmail(ctx)),
       route('PUT', /^\/me\/sharing$/, true, (ctx) => this._setSharing(ctx)),
       route('PATCH', /^\/profiles\/([\w-]{1,64})$/, true, (ctx) => this._renameProfile(ctx)),
@@ -233,17 +234,18 @@ class NotesServer extends EventEmitter {
   // Cómo ve esta extensión a un perfil: el suyo completo; los demás con lo mínimo (los privados, ni siquiera el correo)
   _profileView(instance, p) {
     const sharing = sharingOf(p);
-    if (instance && p.id === instance.profileId) return { ...p, sharing, own: true };
-    if (sharing === 'private') return { id: p.id, browser: p.browser, name: p.name, sharing, own: false };
-    return { id: p.id, browser: p.browser, name: p.name, email: p.email || '', sharing, own: false, unlinked: p.dir === '' };
+    if (instance && p.id === instance.profileId) return { id: p.id, name: p.name, email: p.email || '', sharing, own: true, binding: this.registry.bindingOf(p.id) };
+    if (sharing === 'private') return { id: p.id, name: p.name, sharing, own: false };
+    return { id: p.id, name: p.name, email: p.email || '', sharing, own: false };
   }
 
   _profileList(instance) {
-    // Un perfil sin vincular y sin notas (p. ej. uno que ya se unió a otro) no aporta nada a las extensiones
+    // Una cuenta sin notas ni extensiones (p. ej. una recién creada y sin usar) no aporta nada a las demás extensiones
     const used = new Set();
     for (const n of this.store.notes.values()) if (!n.deleted && n.profileId) used.add(n.profileId);
+    for (const i of this.registry.instances.values()) if (i.profileId) used.add(i.profileId);
     return this.registry.listProfiles()
-      .filter((p) => p.dir !== '' || used.has(p.id) || (instance && p.id === instance.profileId))
+      .filter((p) => used.has(p.id) || (instance && p.id === instance.profileId))
       .map((p) => this._profileView(instance, p));
   }
 
@@ -422,7 +424,7 @@ class NotesServer extends EventEmitter {
       instanceId: instance.id,
       browser: instance.browser,
       label: instance.label,
-      profile: this.registry.getProfile(instance.profileId),
+      profile: instance.profileId ? this._profileView(instance, this.registry.getProfile(instance.profileId)) : null,
       seq: this.store.seq,
       protocol: PROTOCOL,
     });
@@ -436,49 +438,47 @@ class NotesServer extends EventEmitter {
   }
 
   async _profiles(ctx) {
-    return ok({ detected: await this.profiles.detect(), registered: this._profileList(ctx.instance) });
+    const detected = (await this.profiles.detect()).map((d) => {
+      const bound = this.registry.profileAt(d.browser, d.dir);
+      return { ...d, boundTo: bound ? bound.id : null };
+    });
+    return ok({ detected, registered: this._profileList(ctx.instance) });
   }
 
-  async _setProfile(ctx) {
-    const { browser, dir, name } = ctx.body;
-    if (!BROWSERS.includes(browser) || typeof dir !== 'string') throw new HttpError(400, 'invalid_profile');
+  // Enlace local: "la cuenta de esta extensión se abre con este perfil de navegador de esta PC" (uno por cuenta)
+  async _setBinding(ctx) {
+    this._requireProfile(ctx.instance);
+    const { browser, dir } = ctx.body;
+    if (!BROWSERS.includes(browser) || typeof dir !== 'string' || !dir) throw new HttpError(400, 'invalid_profile');
     const detected = (await this.profiles.detect()).find((p) => p.browser === browser && p.dir === dir);
     if (!detected) throw new HttpError(400, 'profile_not_found');
-
-    const profile = this.registry.upsertProfile({
-      browser,
-      dir,
-      name: typeof name === 'string' && name.trim() ? name.trim().slice(0, 60) : detected.name,
-      email: detected.email,
-    });
-    this.registry.setInstanceProfile(ctx.instance.id, profile.id);
+    const binding = this.registry.setBinding(ctx.instance.profileId, browser, dir);
     await this.registry.flush();
     this.broadcastProfiles();
-    this.notifyAccess(ctx.instance.id);
     this.emit('change');
-    return ok({ profile });
+    return ok({ profile: this._profileView(ctx.instance, this.registry.getProfile(ctx.instance.profileId)), binding });
   }
 
-  // Correo del perfil escrito a mano. Si otro perfil del mismo navegador ya lo tiene, hace falta confirmar (merge:true)
-  // para unir ambos: las notas de este pasan al perfil existente, que ocupa la carpeta de este.
+  async _clearBinding(ctx) {
+    this._requireProfile(ctx.instance);
+    this.registry.clearBinding(ctx.instance.profileId);
+    await this.registry.flush();
+    this.broadcastProfiles();
+    this.emit('change');
+    return ok({ ok: true });
+  }
+
+  // Correo de la cuenta (solo una etiqueta; vacío lo borra)
   async _setEmail(ctx) {
     this._requireProfile(ctx.instance);
-    const email = typeof ctx.body.email === 'string' ? ctx.body.email.trim() : '';
-    const result = this.registry.setProfileEmail(ctx.instance.profileId, email);
-    if (!result) throw new HttpError(400, 'invalid_email');
-    let profile = result.profile;
-    let merged = false;
-    if (result.other) {
-      if (ctx.body.merge !== true) throw new HttpError(409, 'email_in_use');
-      profile = this.mergeProfiles(profile.id, result.other.id);
-      merged = true;
-    } else {
-      await this.registry.flush();
-      this.broadcastProfiles();
-      this._queueOthers([profile.id]);
-    }
+    const email = typeof ctx.body.email === 'string' ? ctx.body.email : '';
+    const profile = this.registry.updateProfile(ctx.instance.profileId, { email });
+    if (!profile) throw new HttpError(400, 'invalid_email');
+    await this.registry.flush();
+    this.broadcastProfiles();
+    this._queueOthers([profile.id]);
     this.emit('change');
-    return ok({ profile: this._profileView(ctx.instance, profile), merged });
+    return ok({ profile: this._profileView(ctx.instance, profile) });
   }
 
   // Pasa las notas e instancias de un perfil a otro (la extensión se resincroniza sola)
@@ -601,14 +601,17 @@ class NotesServer extends EventEmitter {
   }
 
   async _renameProfile(ctx) {
+    this._requireProfile(ctx.instance);
     const name = typeof ctx.body.name === 'string' ? ctx.body.name.trim().slice(0, 60) : '';
     if (!name) throw new HttpError(400, 'invalid_name');
-    const profile = this.registry.renameProfile(ctx.params[0], name);
+    if (ctx.params[0] !== ctx.instance.profileId) throw new HttpError(403, 'read_only'); // cada cuenta cambia solo lo suyo
+    const profile = this.registry.updateProfile(ctx.params[0], { name });
     if (!profile) throw new HttpError(404, 'unknown_profile');
     await this.registry.flush();
     this.broadcastProfiles();
+    this._queueOthers([profile.id]);
     this.emit('change');
-    return ok({ profile });
+    return ok({ profile: this._profileView(ctx.instance, profile) });
   }
 
   _listNotes(ctx) {
@@ -743,18 +746,21 @@ class NotesServer extends EventEmitter {
     const profile = this.registry.getProfile(String(profileId));
     if (!profile || (instance && !this._canReadProfile(instance, profile.id))) throw new HttpError(404, 'unknown_profile');
 
+    // Cada cuenta se abre con el navegador que esta PC tenga enlazado a ella
+    const binding = this.registry.bindingOf(profile.id);
+    if (!binding) throw new HttpError(409, 'no_binding');
     const detected = await this.profiles.detect();
-    if (!detected.some((p) => p.browser === profile.browser && p.dir === profile.dir)) {
+    if (!detected.some((p) => p.browser === binding.browser && p.dir === binding.dir)) {
       throw new HttpError(409, 'profile_missing');
     }
 
     try {
-      await this.launcher.open({ browser: profile.browser, dir: profile.dir, url });
+      await this.launcher.open({ browser: binding.browser, dir: binding.dir, url });
     } catch (err) {
       const status = { invalid_url: 400, invalid_browser: 400, invalid_profile: 400, browser_not_found: 409 }[err.code] || 500;
       throw new HttpError(status, err.code || 'open_failed');
     }
-    return { ok: true, browser: profile.browser, profile: profile.name };
+    return { ok: true, browser: binding.browser, profile: profile.name };
   }
 
   // ---------- WebSocket ----------

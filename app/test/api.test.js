@@ -122,25 +122,33 @@ describe('API HTTP', () => {
     assert.equal((await call(a, { method: 'PUT', path: '/palette', body: { list: 'x' } })).status, 400);
   });
 
-  test('perfiles: asignar, notas con perfil, renombrar y validar', async () => {
+  test('cuentas: enlace local, notas con cuenta, nombre y validación', async () => {
     const list = await call(a, { path: '/profiles' });
     assert.equal(list.json.detected.length, 3);
-    assert.equal((await call(a, { method: 'PUT', path: '/me/profile', body: { browser: 'chrome', dir: 'NoExiste' } })).status, 400);
-    assert.equal((await call(a, { method: 'PUT', path: '/me/profile', body: { browser: 'firefox', dir: 'Default' } })).status, 400);
-    const set = await call(a, { method: 'PUT', path: '/me/profile', body: { browser: 'chrome', dir: 'Default' } });
-    assert.equal(set.status, 200);
-    const pid = set.json.profile.id;
+    const pid = (await call(a, { path: '/me' })).json.profile.id;
+    assert.equal(list.json.detected.find((d) => d.dir === 'Default' && d.browser === 'chrome').boundTo, pid);
+    assert.equal((await call(a, { method: 'PUT', path: '/me/binding', body: { browser: 'chrome', dir: 'NoExiste' } })).status, 400);
+    assert.equal((await call(a, { method: 'PUT', path: '/me/binding', body: { browser: 'firefox', dir: 'Default' } })).status, 400);
+    // un solo enlace por cuenta: el último gana
+    const moved = await call(a, { method: 'PUT', path: '/me/binding', body: { browser: 'edge', dir: 'Profile 2' } });
+    assert.deepEqual(moved.json.binding, { browser: 'edge', dir: 'Profile 2' });
+    assert.equal(ctx.core.registry.profileAt('chrome', 'Default'), null);
+    assert.equal((await call(a, { method: 'PUT', path: '/me/binding', body: { browser: 'chrome', dir: 'Default' } })).status, 200);
     const me = await call(a, { path: '/me' });
     assert.equal(me.json.profile.id, pid);
+    assert.deepEqual(me.json.profile.binding, { browser: 'chrome', dir: 'Default' });
 
     const n = await call(a, { method: 'PUT', path: '/notes/pn', body: note('pn') });
-    assert.equal(n.json.note.profileId, pid); // hereda el perfil de la instancia
+    assert.equal(n.json.note.profileId, pid); // hereda la cuenta de la instancia
     assert.equal((await call(a, { method: 'PUT', path: '/notes/pn2', body: note('pn2', { profileId: 'p_inexistente' }) })).status, 400);
 
     const ren = await call(a, { method: 'PATCH', path: `/profiles/${pid}`, body: { name: 'Casa' } });
     assert.equal(ren.json.profile.name, 'Casa');
-    assert.equal((await call(a, { method: 'PATCH', path: '/profiles/p_nada', body: { name: 'x' } })).status, 404);
+    assert.equal((await call(a, { method: 'PATCH', path: '/profiles/p_nada', body: { name: 'x' } })).status, 403, 'solo se renombra la propia');
     assert.equal((await call(a, { method: 'PATCH', path: `/profiles/${pid}`, body: { name: '  ' } })).status, 400);
+    assert.equal((await call(a, { method: 'DELETE', path: '/me/binding' })).status, 200);
+    assert.equal((await call(b, { method: 'POST', path: '/open', body: { noteId: 'pn' } })).json.error, 'no_binding');
+    await call(a, { method: 'PUT', path: '/me/binding', body: { browser: 'chrome', dir: 'Default' } });
   });
 
   test('/open lanza en el navegador y perfil de la nota', async () => {
@@ -172,9 +180,8 @@ describe('/open con errores del lanzador', () => {
     const err = Object.assign(new Error('x'), { code: 'browser_not_found' });
     const ctx = await startCore({ launcher: { open: async () => { throw err; } } });
     try {
-      const a = await pair(ctx);
-      const set = await request(ctx.port, { method: 'PUT', path: '/me/profile', origin: a.origin, token: a.token, body: { browser: 'edge', dir: 'Profile 1' } });
-      const pid = set.json.profile.id;
+      const a = await pair(ctx, { profile: { browser: 'edge', dir: 'Profile 1' } });
+      const pid = a.profileId;
       const r = await request(ctx.port, { method: 'POST', path: '/open', origin: a.origin, token: a.token, body: { url: 'https://a.com', profileId: pid } });
       assert.equal(r.status, 409);
       assert.equal(r.json.error, 'browser_not_found');
@@ -464,10 +471,10 @@ describe('perfiles: cada uno escribe lo suyo y los demás consultan', () => {
       assert.equal((await call(a, { method: 'PUT', path: '/me/sharing', body: { mode: 'secreto' } })).status, 400);
       assert.equal((await call(a, { method: 'PUT', path: '/me/sharing', body: { mode: 'private' } })).json.profile.sharing, 'private');
       const live = await until(() => cb.messages.find((m) => m.type === 'profiles'), 'lista de perfiles actualizada');
-      assert.deepEqual(live.profiles.find((p) => p.id === a.profileId), { id: a.profileId, browser: 'chrome', name: 'Personal', sharing: 'private', own: false });
+      assert.deepEqual(live.profiles.find((p) => p.id === a.profileId), { id: a.profileId, name: 'Personal', sharing: 'private', own: false });
 
       const other = (await call(b, { path: '/others' })).json.profiles[0];
-      assert.deepEqual(other, { id: a.profileId, browser: 'chrome', name: 'Personal', sharing: 'private', own: false });
+      assert.deepEqual(other, { id: a.profileId, name: 'Personal', sharing: 'private', own: false });
       assert.equal((await call(b, { path: `/profiles/${a.profileId}/notes` })).status, 404);
       assert.deepEqual((await call(b, { path: '/search?q=person' })).json.groups, []);
       assert.equal((await call(b, { method: 'POST', path: '/open', body: { noteId: 'na' } })).status, 404);
@@ -584,44 +591,57 @@ describe('perfiles: cada uno escribe lo suyo y los demás consultan', () => {
     }
   });
 
-  test('el correo se puede escribir a mano y, si ya existe otro perfil con él, se unen las notas', async () => {
+  test('correo y nombre son de cada cuenta (solo una etiqueta, nunca cambia lo detectado)', async () => {
     const { ctx, a, b, call } = await setup();
     try {
-      await call(a, { method: 'PUT', path: '/notes/na', body: note('na', { title: 'del perfil A' }) });
-      await call(b, { method: 'PUT', path: '/notes/nb', body: note('nb', { title: 'del perfil B' }) });
       assert.equal((await call(b, { method: 'PUT', path: '/me/email', body: { email: 'no es un correo' } })).status, 400);
       const set = await call(b, { method: 'PUT', path: '/me/email', body: { email: 'Yo@Gmail.com' } });
       assert.equal(set.status, 200);
       assert.equal(set.json.profile.email, 'Yo@Gmail.com');
-      assert.equal(ctx.core.registry.getProfile(b.profileId).emailManual, true);
-      // el mismo correo en otro perfil del mismo navegador: pide confirmar
-      const clash = await call(a, { method: 'PUT', path: '/me/email', body: { email: 'yo@gmail.com' } });
-      assert.equal(clash.status, 200, 'distinto navegador: no choca');
-      const edge2 = await pair(ctx, { origin: 'chrome-extension://cccccccccccccccccccccccccccccccc', profile: { browser: 'edge', dir: 'Profile 2' } });
-      const need = await call(edge2, { method: 'PUT', path: '/me/email', body: { email: 'yo@gmail.com' } });
-      assert.equal(need.status, 409);
-      assert.equal(need.json.error, 'email_in_use');
-      await call(edge2, { method: 'PUT', path: '/notes/nc', body: note('nc', { title: 'del perfil nuevo' }) });
-      const merged = await call(edge2, { method: 'PUT', path: '/me/email', body: { email: 'yo@gmail.com', merge: true } });
-      assert.equal(merged.status, 200);
-      assert.equal(merged.json.merged, true);
-      assert.equal(merged.json.profile.id, b.profileId, 'queda el perfil que ya existía');
-      assert.equal(ctx.core.registry.getProfile(b.profileId).dir, 'Profile 1');
-      assert.deepEqual((await call(edge2, { path: '/notes' })).json.notes.map((n) => n.id).sort(), ['nb', 'nc']);
-      assert.equal(ctx.core.store.get('nc').profileId, b.profileId);
+      assert.equal(ctx.core.registry.getProfile(b.profileId).email, 'Yo@Gmail.com');
+      // dos cuentas pueden tener el mismo correo: es una etiqueta
+      assert.equal((await call(a, { method: 'PUT', path: '/me/email', body: { email: 'yo@gmail.com' } })).status, 200);
+      assert.equal((await call(a, { method: 'PUT', path: '/me/email', body: { email: '' } })).json.profile.email, '', 'se puede borrar');
+      assert.equal((await call(b, { method: 'PATCH', path: `/profiles/${a.profileId}`, body: { name: 'x' } })).status, 403);
     } finally {
       await ctx.close();
     }
   });
 
-  test('desde la app: unir un perfil con otro pasa sus notas y los perfiles vacíos sin vincular se ocultan', async () => {
+  test('unir cuentas desde la app pasa sus notas y extensiones, y la unida deja de listarse', async () => {
     const { ctx, a, b, call } = await setup();
     try {
       await call(a, { method: 'PUT', path: '/notes/na', body: note('na') });
+      await call(b, { method: 'PUT', path: '/notes/nb', body: note('nb') });
       assert.ok(ctx.core.mergeProfiles(a.profileId, b.profileId));
       assert.equal(ctx.core.store.get('na').profileId, b.profileId);
-      assert.deepEqual((await call(b, { path: '/notes' })).json.notes.map((n) => n.id), ['na']);
-      assert.equal((await call(a, { path: '/me' })).json.profile.id, b.profileId, 'la extensión de A pasa al perfil unido');
+      assert.deepEqual((await call(a, { path: '/notes' })).json.notes.map((n) => n.id).sort(), ['na', 'nb']);
+      assert.equal((await call(a, { path: '/me' })).json.profile.id, b.profileId, 'la extensión de A pasa a la cuenta unida');
+      assert.equal(ctx.core.registry.getProfile(a.profileId).mergedInto, b.profileId);
+      assert.ok(!ctx.core.registry.listProfiles().some((p) => p.id === a.profileId));
+      assert.deepEqual(ctx.core.registry.bindingOf(b.profileId), { browser: 'edge', dir: 'Profile 1' }, 'conserva su propio enlace');
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('el código de emparejamiento lleva la cuenta: existente o nueva', async () => {
+    const ctx = await startCore();
+    try {
+      const existing = ctx.core.registry.createProfile({ name: 'Ya existía', email: 'x@y.com' });
+      const one = await pair(ctx, { profile: null });
+      assert.equal(one.profileId, null);
+      assert.equal((await request(ctx.port, { path: '/notes', origin: one.origin, token: one.token })).status, 409, 'sin cuenta no hay notas');
+      const { code } = ctx.core.newPairingCode({ profileId: existing.id });
+      const res = await request(ctx.port, { method: 'POST', path: '/pair', origin: ORIGIN_B, body: { code, browser: 'chrome' } });
+      const me = await request(ctx.port, { path: '/me', origin: ORIGIN_B, token: res.json.token });
+      assert.equal(me.json.profile.id, existing.id);
+      const fresh = ctx.core.newPairingCode({ create: { name: 'Nueva', email: 'n@y.com' } });
+      assert.equal(ctx.core.registry.listProfiles().length, 1, 'la cuenta nueva se crea al emparejar, no al generar el código');
+      const res2 = await request(ctx.port, { method: 'POST', path: '/pair', origin: ORIGIN_A, body: { code: fresh.code, browser: 'chrome' } });
+      const me2 = await request(ctx.port, { path: '/me', origin: ORIGIN_A, token: res2.json.token });
+      assert.deepEqual([me2.json.profile.name, me2.json.profile.email], ['Nueva', 'n@y.com']);
+      assert.throws(() => ctx.core.newPairingCode({ profileId: 'p_inexistente' }));
     } finally {
       await ctx.close();
     }

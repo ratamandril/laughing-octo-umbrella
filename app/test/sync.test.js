@@ -65,7 +65,7 @@ describe('sync con Firestore (doble en memoria)', () => {
     store.put(n('b'));
     store.remove('b');
     store.setPalette([{ id: 'r', hex: '#ff0000', name: 'Rojo' }]);
-    registry.upsertProfile({ browser: 'chrome', dir: 'Default', name: 'Personal' });
+    registry.createProfile({ name: 'Personal' });
     await engine.start();
     assert.equal(engine.getStatus().state, 'online');
     assert.equal(engine.getStatus().pending, 0);
@@ -95,7 +95,7 @@ describe('sync con Firestore (doble en memoria)', () => {
     const first = mkEngine(tmpDir(), remote);
     first.store.put(n('a', { description: 'hola' }));
     first.store.put(n('b'));
-    first.registry.upsertProfile({ browser: 'edge', dir: 'Profile 1', name: 'Trabajo' });
+    first.registry.createProfile({ name: 'Trabajo' });
     await first.engine.start();
     await first.engine.stop();
 
@@ -154,19 +154,42 @@ describe('sync con Firestore (doble en memoria)', () => {
     const { store, registry, engine } = mkEngine(tmpDir(), remote);
     await engine.start();
     remote.external({ id: 'mala', url: 'javascript:alert(1)', updatedAt: Date.now() + 1 });
-    remote.listener.onBatch({ profiles: [{ id: '../x', browser: 'chrome', dir: '..', name: 'x' }, { id: 'p_aaaaaaaaaaaa', browser: 'chrome', dir: '..', name: 'x' }] });
+    remote.listener.onBatch({ profiles: [{ id: '../x', browser: 'chrome', dir: '..', name: 'x' }, { id: 'p_aaaaaaaaaaaa', name: '' }] });
     assert.equal(store.get('mala'), undefined);
     assert.equal(registry.listProfiles().length, 0);
     await engine.stop();
   });
 
-  test('un perfil de otro equipo (sin carpeta) y su modo de compartición se importan', async () => {
+  test('una cuenta de otro equipo se importa sin datos del navegador (los campos viejos se ignoran)', async () => {
     const remote = new FakeRemote();
     const { registry, engine } = mkEngine(tmpDir(), remote);
     await engine.start();
-    remote.listener.onBatch({ profiles: [{ id: 'p_bbbbbbbbbbbb', browser: 'edge', dir: '', name: 'Trabajo', email: 't@x.com', sharing: 'private' }] });
+    remote.listener.onBatch({ profiles: [{ id: 'p_bbbbbbbbbbbb', browser: 'edge', dir: 'Profile 1', name: 'Trabajo', email: 't@x.com', sharing: 'private' }] });
     const p = registry.getProfile('p_bbbbbbbbbbbb');
-    assert.deepEqual([p.dir, p.email, p.sharing], ['', 't@x.com', 'private']);
+    assert.deepEqual([p.name, p.email, p.sharing], ['Trabajo', 't@x.com', 'private']);
+    assert.ok(!('dir' in p) && !('browser' in p), 'el enlace con el navegador es de cada PC y no viaja');
+    assert.equal(registry.bindingOf(p.id), null);
+    await engine.stop();
+  });
+
+  test('una cuenta unida en otro equipo: aquí pasan sus notas y extensiones, y las notas viejas que lleguen se reubican', async () => {
+    const remote = new FakeRemote();
+    const { store, registry, engine } = mkEngine(tmpDir(), remote);
+    await engine.start();
+    const from = registry.createProfile({ name: 'Vieja' });
+    const into = registry.createProfile({ name: 'Nueva' });
+    registry.addInstance({ id: 'i_x', tokenHash: 'h'.repeat(10), origin: 'o', browser: 'chrome', label: '', profileId: from.id, pairedAt: 1 });
+    store.put(n('a', { profileId: from.id }));
+    const applied = [];
+    engine.on('applied', (a) => applied.push(a));
+    remote.listener.onBatch({ profiles: [{ id: from.id, name: 'Vieja', email: '', sharing: 'read', mergedInto: into.id }] });
+    assert.equal(store.get('a').profileId, into.id);
+    assert.equal(registry.getInstance('i_x').profileId, into.id);
+    assert.ok(!registry.listProfiles().some((p) => p.id === from.id));
+    assert.ok(applied.some((x) => x.notes.some((note) => note.id === 'a')), 'se avisa a las extensiones');
+    // una nota creada en otro equipo con la cuenta antigua llega ya reubicada
+    remote.external({ ...n('b', { profileId: from.id }), updatedAt: Date.now() + 5 });
+    assert.equal(store.get('b').profileId, into.id);
     await engine.stop();
   });
 

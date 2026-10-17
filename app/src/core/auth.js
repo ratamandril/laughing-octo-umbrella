@@ -32,10 +32,12 @@ class Auth extends EventEmitter {
     this.pairing = null;
   }
 
-  createPairingCode() {
+  // `profileId`: cuenta a la que quedará enlazada la extensión que use el código; `create` ({name, email}): se crea
+  // la cuenta al emparejar (así un código que caduca no deja cuentas vacías)
+  createPairingCode({ profileId = null, create = null } = {}) {
     let raw = '';
     for (let i = 0; i < CODE_LENGTH; i++) raw += ALPHABET[crypto.randomInt(ALPHABET.length)];
-    this.pairing = { code: raw, expiresAt: this.now() + this.codeTtlMs, attempts: 0 };
+    this.pairing = { code: raw, expiresAt: this.now() + this.codeTtlMs, attempts: 0, profileId, create };
     this.emit('change');
     return this.pairingState();
   }
@@ -51,7 +53,7 @@ class Auth extends EventEmitter {
   // Lo que ve la interfaz: código con formato XXXX-XXXX y cuándo caduca
   pairingState() {
     const p = this._active();
-    return p ? { code: `${p.code.slice(0, 4)}-${p.code.slice(4)}`, expiresAt: p.expiresAt } : null;
+    return p ? { code: `${p.code.slice(0, 4)}-${p.code.slice(4)}`, expiresAt: p.expiresAt, profileId: p.profileId, create: p.create } : null;
   }
 
   cancelPairing() {
@@ -78,6 +80,8 @@ class Auth extends EventEmitter {
     }
 
     this.pairing = null;
+    let profileId = p.profileId && this.registry.getProfile(p.profileId) ? p.profileId : null;
+    if (!profileId && p.create) profileId = this.registry.createProfile(p.create).id;
     const token = crypto.randomBytes(32).toString('base64url');
     const instance = {
       id: 'i_' + crypto.randomBytes(9).toString('base64url'),
@@ -85,7 +89,7 @@ class Auth extends EventEmitter {
       origin,
       browser,
       label,
-      profileId: null,
+      profileId,
       pairedAt: this.now(),
     };
     this.registry.addInstance(instance);

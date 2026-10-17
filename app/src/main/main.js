@@ -114,7 +114,12 @@ function watchState() {
 
 function registerIpc() {
   ipcMain.handle('state:get', () => core.state());
-  ipcMain.handle('pairing:new', () => core.newPairingCode());
+  ipcMain.handle('pairing:new', (_event, opts) => {
+    const o = opts && typeof opts === 'object' ? opts : {};
+    if (o.profileId) return core.newPairingCode({ profileId: str(o.profileId) });
+    if (o.create && typeof o.create === 'object') return core.newPairingCode({ create: { name: str(o.create.name), email: str(o.create.email) } });
+    return core.newPairingCode();
+  });
   ipcMain.handle('pairing:cancel', () => core.auth.cancelPairing());
   ipcMain.handle('instance:revoke', (_event, id) => (typeof id === 'string' ? core.revokeInstance(id) : false));
   ipcMain.handle('data:open', () => shell.openPath(core.dataDir));
@@ -159,7 +164,9 @@ function registerIpc() {
   ipcMain.handle('trash:restore', (_event, id) => !!core.restoreNote(str(id)));
   ipcMain.handle('trash:purge', (_event, id) => !!core.purgeNote(str(id)));
   ipcMain.handle('trash:empty', () => core.emptyTrash());
-  ipcMain.handle('profiles:email', (_event, profileId, email) => core.setEmail(str(profileId), str(email)));
+  ipcMain.handle('profiles:update', (_event, profileId, patch) => core.updateProfile(str(profileId), { name: patch && typeof patch.name === 'string' ? patch.name : undefined, email: patch && typeof patch.email === 'string' ? patch.email : undefined }));
+  ipcMain.handle('profiles:bind', (_event, profileId, browser, dir) => core.setBinding(str(profileId), str(browser), str(dir)));
+  ipcMain.handle('instances:assign', (_event, instanceId, profileId) => core.assignInstance(str(instanceId), str(profileId)));
   ipcMain.handle('profiles:merge', (_event, fromId, intoId) => core.mergeProfiles(str(fromId), str(intoId)));
   ipcMain.handle('profiles:sharing', (_event, profileId, mode) => core.setSharing(str(profileId), str(mode)));
   ipcMain.handle('sync:now', () => core.syncNow());

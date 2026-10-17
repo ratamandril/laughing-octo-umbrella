@@ -13,6 +13,15 @@ const SHARING = ['private', 'read', 'edit'];
 const DEFAULT_SHARING = 'read';
 const sharingOf = (profile) => (profile && SHARING.includes(profile.sharing) ? profile.sharing : DEFAULT_SHARING);
 
+const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,255}$/;
+const cleanName = (v) => String(v ?? '').trim().slice(0, 60);
+// '' si no hay correo; null si lo que se escribió no parece un correo
+const cleanEmail = (v) => {
+  const mail = String(v ?? '').trim();
+  if (!mail) return '';
+  return mail.length <= 254 && EMAIL_RE.test(mail) ? mail : null;
+};
+
 function publicInstance(instance) {
   if (!instance) return null;
   const { tokenHash, ...rest } = instance; // eslint-disable-line no-unused-vars
@@ -23,6 +32,7 @@ class Registry {
   constructor({ dir, onError } = {}) {
     this.instances = new Map();
     this.profiles = new Map();
+    this.bindings = new Map(); // profileId -> {browser, dir}: solo de esta PC
     this.byTokenHash = new Map();
     this.file = new JsonFile(path.join(dir, 'config.json'), () => this._snapshot(), { delayMs: 50, onError });
   }
@@ -39,6 +49,10 @@ class Registry {
     for (const profile of Object.values(data.profiles || {})) {
       if (profile && typeof profile.id === 'string') this.profiles.set(profile.id, profile);
     }
+    for (const [id, b] of Object.entries(data.bindings || {})) {
+      if (b && this.profiles.has(id) && typeof b.browser === 'string' && typeof b.dir === 'string') this.bindings.set(id, { browser: b.browser, dir: b.dir });
+    }
+    this._migrate();
     return this;
   }
 
@@ -47,7 +61,27 @@ class Registry {
       version: 1,
       instances: Object.fromEntries(this.instances),
       profiles: Object.fromEntries(this.profiles),
+      bindings: Object.fromEntries(this.bindings),
     };
+  }
+
+  // Versiones anteriores guardaban el navegador y la carpeta dentro del perfil: pasan a ser el enlace local de esta PC
+  _migrate() {
+    let changed = false;
+    for (const p of this.profiles.values()) {
+      if ('dir' in p || 'browser' in p || 'emailManual' in p) {
+        if (typeof p.dir === 'string' && p.dir && typeof p.browser === 'string' && !p.mergedInto) {
+          const taken = [...this.bindings].some(([id, b]) => id !== p.id && b.browser === p.browser && b.dir === p.dir);
+          if (!taken && !this.bindings.has(p.id)) this.bindings.set(p.id, { browser: p.browser, dir: p.dir });
+        }
+        delete p.dir;
+        delete p.browser;
+        delete p.emailManual;
+        changed = true;
+      }
+      if (!SHARING.includes(p.sharing)) { p.sharing = DEFAULT_SHARING; changed = true; }
+    }
+    if (changed) this.file.markDirty();
   }
 
   // ----- instancias -----
@@ -88,40 +122,14 @@ class Registry {
     return true;
   }
 
-  // ----- perfiles -----
-  // Un perfil es (navegador, carpeta de perfil) y, si el navegador tiene sesión, su correo.
-  // Se crea al asignarlo a una extensión. Para no atribuir notas a otra cuenta:
-  //  1. si ya hay un perfil del mismo navegador con ese correo, es el mismo (aunque la carpeta sea distinta: otro equipo);
-  //  2. si la carpeta coincide pero el correo es otro, NO se sobrescribe: se crea un perfil nuevo y el anterior
-  //     queda "sin vincular" en este equipo (dir vacío) conservando su correo y sus notas.
-  upsertProfile({ browser, dir, name, email }) {
-    const mail = String(email || '').trim().toLowerCase();
-    let found = null;
-    if (mail) found = [...this.profiles.values()].find((p) => p.browser === browser && String(p.email || '').toLowerCase() === mail) || null;
-    if (!found) {
-      const sameDir = [...this.profiles.values()].find((p) => p.browser === browser && p.dir === dir);
-      if (sameDir) {
-        const known = String(sameDir.email || '').toLowerCase();
-        // Con correo escrito a mano manda ese: la detección no lo cambia ni crea un perfil duplicado
-        if (!sameDir.emailManual && known && mail && known !== mail) sameDir.dir = ''; // era otra cuenta: queda sin vincular
-        else found = sameDir;
-      }
-    }
-    if (found) {
-      // La carpeta puede ser otra (otro equipo): solo se mueve si nadie más la ocupa
-      if (found.dir !== dir && ![...this.profiles.values()].some((p) => p !== found && p.browser === browser && p.dir === dir)) found.dir = dir;
-      if (name) found.name = name;
-      if (email && !found.email && !found.emailManual) found.email = email;
-      if (!SHARING.includes(found.sharing)) found.sharing = DEFAULT_SHARING;
-      this.file.markDirty();
-      return found;
-    }
+  // ----- cuentas ("perfiles" en el código y en el protocolo) -----
+  // Una cuenta es una identidad que elige el usuario: {id, name, email, sharing}. Las notas pertenecen a ella y se
+  // sincronizan con Firestore. No guarda nada del navegador: eso es el "enlace local" (abajo), propio de cada PC.
+  createProfile({ name, email = '' } = {}) {
     const profile = {
       id: 'p_' + crypto.randomBytes(6).toString('hex'),
-      browser,
-      dir,
-      name: name || dir,
-      email: email || '',
+      name: cleanName(name) || 'Cuenta',
+      email: cleanEmail(email) || '',
       sharing: DEFAULT_SHARING,
     };
     this.profiles.set(profile.id, profile);
@@ -129,35 +137,22 @@ class Registry {
     return profile;
   }
 
-  // Correo escrito a mano (para perfiles donde el navegador no lo conoce, p. ej. una cuenta de Google en Edge)
-  // Si otro perfil del mismo navegador ya tiene ese correo, devuelve {profile, other} sin cambiar nada: lo decide quien llama
-  setProfileEmail(id, email) {
+  // Cambia el nombre y/o el correo (el correo es solo una etiqueta; puede quedar vacío)
+  updateProfile(id, { name, email } = {}) {
     const profile = this.profiles.get(id);
-    const mail = String(email || '').trim();
-    if (!profile || (mail && !/^[^\s@]{1,64}@[^\s@]{1,255}$/.test(mail)) || mail.length > 254) return null;
-    const other = mail
-      ? [...this.profiles.values()].find((p) => p.id !== id && p.browser === profile.browser && String(p.email || '').toLowerCase() === mail.toLowerCase()) || null
-      : null;
-    if (other) return { profile, other };
-    profile.email = mail;
-    profile.emailManual = !!mail;
-    this.file.markDirty();
-    return { profile, other: null };
-  }
-
-  // Une el perfil `from` en `into`: sus instancias pasan a `into` y, si `into` no estaba vinculado en este equipo, hereda su carpeta
-  mergeProfile(fromId, intoId) {
-    const from = this.profiles.get(fromId);
-    const into = this.profiles.get(intoId);
-    if (!from || !into || from === into) return null;
-    if (into.dir === '' && from.dir && from.browser === into.browser) {
-      into.dir = from.dir;
-      from.dir = '';
+    if (!profile) return null;
+    if (name !== undefined) {
+      const clean = cleanName(name);
+      if (!clean) return null;
+      profile.name = clean;
     }
-    for (const instance of this.instances.values()) if (instance.profileId === from.id) instance.profileId = into.id;
-    if (!into.email && from.email) { into.email = from.email; into.emailManual = !!from.emailManual; }
+    if (email !== undefined) {
+      const clean = cleanEmail(email);
+      if (clean === null) return null;
+      profile.email = clean;
+    }
     this.file.markDirty();
-    return into;
+    return profile;
   }
 
   setProfileSharing(id, mode) {
@@ -168,28 +163,91 @@ class Registry {
     return profile;
   }
 
-  // Perfil recibido de la sincronización: solo se añade si aún no existe ese id
-  importProfile(profile) {
-    if (this.profiles.has(profile.id)) return false;
-    this.profiles.set(profile.id, { id: profile.id, browser: profile.browser, dir: profile.dir, name: profile.name, email: profile.email || '', emailManual: !!profile.emailManual, sharing: sharingOf(profile) });
-    this.file.markDirty();
-    return true;
+  // Cuenta a la que apunta una cuenta ya unida a otra (sigue la cadena)
+  resolveProfileId(id) {
+    let current = id;
+    for (let i = 0; i < 10; i++) {
+      const p = this.profiles.get(current);
+      if (!p || !p.mergedInto) return current;
+      current = p.mergedInto;
+    }
+    return current;
   }
 
-  renameProfile(id, name) {
-    const profile = this.profiles.get(id);
-    if (!profile) return null;
-    profile.name = name;
+  // ----- enlace local: "esta cuenta se abre con este perfil de navegador de esta PC" (uno por cuenta) -----
+  setBinding(profileId, browser, dir) {
+    if (!this.profiles.has(profileId)) return null;
+    for (const [id, b] of this.bindings) if (id !== profileId && b.browser === browser && b.dir === dir) this.bindings.delete(id);
+    const binding = { browser, dir };
+    this.bindings.set(profileId, binding);
     this.file.markDirty();
-    return profile;
+    return binding;
+  }
+
+  clearBinding(profileId) {
+    const had = this.bindings.delete(profileId);
+    if (had) this.file.markDirty();
+    return had;
+  }
+
+  bindingOf(profileId) {
+    return this.bindings.get(profileId) || null;
+  }
+
+  profileAt(browser, dir) {
+    for (const [id, b] of this.bindings) if (b.browser === browser && b.dir === dir) return this.profiles.get(id) || null;
+    return null;
+  }
+
+  // Une la cuenta `from` en `into`: sus extensiones pasan a `into` y `from` queda marcada como unida (no se borra,
+  // para que la sincronización no la reviva). Las notas las mueve quien llama.
+  mergeProfile(fromId, intoId) {
+    const from = this.profiles.get(fromId);
+    const into = this.profiles.get(this.resolveProfileId(intoId));
+    if (!from || !into || from === into) return null;
+    for (const instance of this.instances.values()) if (instance.profileId === from.id) instance.profileId = into.id;
+    const binding = this.bindings.get(from.id);
+    this.bindings.delete(from.id);
+    if (binding && !this.bindings.has(into.id)) this.bindings.set(into.id, binding);
+    if (!into.email && from.email) into.email = from.email;
+    from.mergedInto = into.id;
+    this.file.markDirty();
+    return into;
+  }
+
+  // Cuenta recibida de la sincronización: solo se añade si aún no existe ese id; lo que sí se propaga es la unión
+  // Devuelve 'added' | 'merged' | false
+  importProfile(profile) {
+    const known = this.profiles.get(profile.id);
+    if (!known) {
+      const stored = { id: profile.id, name: profile.name, email: profile.email || '', sharing: sharingOf(profile) };
+      if (profile.mergedInto) stored.mergedInto = profile.mergedInto;
+      this.profiles.set(stored.id, stored);
+      this.file.markDirty();
+      return stored.mergedInto ? 'merged' : 'added';
+    }
+    if (profile.mergedInto && !known.mergedInto && this.profiles.has(profile.mergedInto)) {
+      return this.mergeProfile(known.id, profile.mergedInto) ? 'merged' : false;
+    }
+    return false;
   }
 
   getProfile(id) {
     return (id && this.profiles.get(id)) || null;
   }
 
+  // Cuentas en uso (las unidas a otra no cuentan)
   listProfiles() {
+    return [...this.profiles.values()].filter((p) => !p.mergedInto);
+  }
+
+  // Todas, también las unidas: es lo que se sincroniza con Firestore
+  listAllProfiles() {
     return [...this.profiles.values()];
+  }
+
+  listBindings() {
+    return [...this.bindings].map(([profileId, b]) => ({ profileId, ...b }));
   }
 
   flush() {

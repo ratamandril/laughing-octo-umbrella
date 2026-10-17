@@ -334,59 +334,87 @@ describe('perfiles y lanzador', () => {
   });
 });
 
-describe('perfiles por correo (registro)', () => {
+describe('cuentas y enlaces locales (registro)', () => {
   const make = () => new Registry({ dir: tmpDir() });
 
-  test('el mismo correo en otra carpeta es el mismo perfil (otro equipo); el modo por defecto es solo lectura', () => {
+  test('una cuenta es {id, nombre, correo, modo}: por defecto solo lectura, nombre y correo validados', () => {
     const reg = make();
-    const first = reg.upsertProfile({ browser: 'edge', dir: 'Profile 1', name: 'Trabajo', email: 'trabajo@x.com' });
-    assert.equal(first.sharing, 'read');
-    const again = reg.upsertProfile({ browser: 'edge', dir: 'Profile 3', name: 'Trabajo', email: 'TRABAJO@x.com' });
-    assert.equal(again.id, first.id);
-    assert.equal(again.dir, 'Profile 3');
-    assert.equal(reg.listProfiles().length, 1);
+    const p = reg.createProfile({ name: '  Personal  ', email: 'a@x.com' });
+    assert.deepEqual([p.name, p.email, p.sharing], ['Personal', 'a@x.com', 'read']);
+    assert.ok(!('dir' in p) && !('browser' in p));
+    assert.equal(reg.updateProfile(p.id, { email: 'malo' }), null);
+    assert.equal(reg.updateProfile(p.id, { name: '  ' }), null);
+    assert.equal(reg.updateProfile(p.id, { email: '' }).email, '', 'el correo es opcional');
+    assert.equal(reg.updateProfile(p.id, { name: 'Casa' }).name, 'Casa');
+    assert.equal(reg.createProfile({}).name, 'Cuenta');
   });
 
-  test('la misma carpeta con otro correo no sobrescribe: perfil nuevo y el anterior queda sin vincular', () => {
+  test('enlace local: uno por cuenta (el último gana) y una carpeta pertenece a una sola cuenta', () => {
     const reg = make();
-    const old = reg.upsertProfile({ browser: 'edge', dir: 'Profile 1', name: 'Trabajo', email: 'trabajo@x.com' });
-    const other = reg.upsertProfile({ browser: 'edge', dir: 'Profile 1', name: 'Estudio', email: 'estudio@x.com' });
-    assert.notEqual(other.id, old.id);
-    assert.equal(old.dir, '');
-    assert.equal(old.email, 'trabajo@x.com'); // conserva su correo
-    assert.equal(other.dir, 'Profile 1');
-    // si luego esa cuenta aparece en otra carpeta, vuelve a vincularse
-    const back = reg.upsertProfile({ browser: 'edge', dir: 'Profile 2', name: 'Trabajo', email: 'trabajo@x.com' });
-    assert.equal(back.id, old.id);
-    assert.equal(old.dir, 'Profile 2');
+    const a = reg.createProfile({ name: 'A' });
+    const b = reg.createProfile({ name: 'B' });
+    reg.setBinding(a.id, 'chrome', 'Default');
+    reg.setBinding(a.id, 'edge', 'Profile 1');
+    assert.deepEqual(reg.bindingOf(a.id), { browser: 'edge', dir: 'Profile 1' });
+    assert.equal(reg.profileAt('chrome', 'Default'), null);
+    reg.setBinding(b.id, 'edge', 'Profile 1'); // la carpeta pasa a B
+    assert.equal(reg.bindingOf(a.id), null);
+    assert.equal(reg.profileAt('edge', 'Profile 1').id, b.id);
+    assert.equal(reg.setBinding('p_nada', 'edge', 'x'), null);
+    assert.equal(reg.clearBinding(b.id), true);
   });
 
-  test('con correo escrito a mano, la detección no lo cambia ni crea perfiles duplicados', () => {
-    const reg = make();
-    const p = reg.upsertProfile({ browser: 'edge', dir: 'Profile 1', name: 'Estudio', email: '' });
-    assert.equal(reg.setProfileEmail(p.id, 'yo@gmail.com').profile.emailManual, true);
-    const again = reg.upsertProfile({ browser: 'edge', dir: 'Profile 1', name: 'Estudio', email: 'otra@outlook.com' });
-    assert.equal(again.id, p.id);
-    assert.equal(again.email, 'yo@gmail.com');
-    assert.equal(reg.listProfiles().length, 1);
-    assert.equal(reg.setProfileEmail(p.id, 'malo'), null);
+  test('los enlaces se guardan en esta PC y sobreviven a reiniciar', async () => {
+    const dir = tmpDir();
+    const reg = new Registry({ dir });
+    const a = reg.createProfile({ name: 'A' });
+    reg.setBinding(a.id, 'chrome', 'Default');
+    await reg.flush();
+    const again = new Registry({ dir }).load();
+    assert.deepEqual(again.bindingOf(a.id), { browser: 'chrome', dir: 'Default' });
+    assert.equal(again.getProfile(a.id).name, 'A');
   });
 
-  test('sin correo (perfil sin sesión) se reutiliza por carpeta y no se pisa un correo ya guardado', () => {
+  test('migración: el navegador y la carpeta de un perfil antiguo pasan a ser su enlace local', async () => {
+    const dir = tmpDir();
+    fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({
+      version: 1,
+      instances: {},
+      profiles: {
+        p_aaaaaaaaaaaa: { id: 'p_aaaaaaaaaaaa', browser: 'chrome', dir: 'Default', name: 'Personal', email: 'a@x.com', emailManual: true, sharing: 'edit' },
+        p_bbbbbbbbbbbb: { id: 'p_bbbbbbbbbbbb', browser: 'edge', dir: '', name: 'De otro equipo', email: 'b@x.com' },
+        p_cccccccccccc: { id: 'p_cccccccccccc', browser: 'chrome', dir: 'Default', name: 'Duplicado', email: '' },
+      },
+    }));
+    const reg = new Registry({ dir }).load();
+    const a = reg.getProfile('p_aaaaaaaaaaaa');
+    assert.deepEqual([a.name, a.email, a.sharing], ['Personal', 'a@x.com', 'edit']);
+    assert.ok(!('dir' in a) && !('browser' in a) && !('emailManual' in a));
+    assert.deepEqual(reg.bindingOf('p_aaaaaaaaaaaa'), { browser: 'chrome', dir: 'Default' });
+    assert.equal(reg.bindingOf('p_bbbbbbbbbbbb'), null, 'sin carpeta: queda sin enlace');
+    assert.equal(reg.bindingOf('p_cccccccccccc'), null, 'una carpeta no puede estar en dos cuentas');
+    assert.equal(reg.getProfile('p_bbbbbbbbbbbb').sharing, 'read');
+  });
+
+  test('unir cuentas: las extensiones pasan a la resultante, el enlace se conserva si no tenía y la unida deja de listarse', () => {
     const reg = make();
-    const a = reg.upsertProfile({ browser: 'chrome', dir: 'Default', name: 'Personal', email: 'a@x.com' });
-    const same = reg.upsertProfile({ browser: 'chrome', dir: 'Default', name: 'Personal', email: '' });
-    assert.equal(same.id, a.id);
-    assert.equal(a.email, 'a@x.com');
-    const empty = reg.upsertProfile({ browser: 'chrome', dir: 'Profile 9', name: 'Sin sesión', email: '' });
-    const filled = reg.upsertProfile({ browser: 'chrome', dir: 'Profile 9', name: 'Sin sesión', email: 'z@x.com' });
-    assert.equal(filled.id, empty.id);
-    assert.equal(filled.email, 'z@x.com'); // se completa cuando antes estaba vacío
+    const from = reg.createProfile({ name: 'Vieja', email: 'v@x.com' });
+    const into = reg.createProfile({ name: 'Nueva' });
+    reg.addInstance({ id: 'i_1', tokenHash: 'a'.repeat(12), origin: 'o', browser: 'chrome', label: '', profileId: from.id, pairedAt: 1 });
+    reg.setBinding(from.id, 'chrome', 'Default');
+    assert.equal(reg.mergeProfile(from.id, into.id).id, into.id);
+    assert.equal(reg.getInstance('i_1').profileId, into.id);
+    assert.deepEqual(reg.bindingOf(into.id), { browser: 'chrome', dir: 'Default' });
+    assert.equal(reg.bindingOf(from.id), null);
+    assert.equal(into.email, 'v@x.com', 'hereda el correo si no tenía');
+    assert.deepEqual(reg.listProfiles().map((p) => p.id), [into.id]);
+    assert.equal(reg.resolveProfileId(from.id), into.id);
+    assert.equal(reg.mergeProfile(into.id, into.id), null);
   });
 
   test('modo de compartición: solo valores válidos; lo desconocido cuenta como solo lectura', () => {
     const reg = make();
-    const p = reg.upsertProfile({ browser: 'chrome', dir: 'Default', name: 'P', email: '' });
+    const p = reg.createProfile({ name: 'P' });
     assert.equal(reg.setProfileSharing(p.id, 'private').sharing, 'private');
     assert.equal(reg.setProfileSharing(p.id, 'todo'), null);
     assert.equal(p.sharing, 'private');

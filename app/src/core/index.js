@@ -103,6 +103,10 @@ function createCore(options = {}) {
   async function state() {
     const online = server.onlineInstanceIds();
     const profilesById = new Map(registry.listProfiles().map((p) => [p.id, p]));
+    const noteCounts = new Map();
+    for (const n of store.notes.values()) if (!n.deleted && n.profileId) noteCounts.set(n.profileId, (noteCounts.get(n.profileId) || 0) + 1);
+    const instanceCounts = new Map();
+    for (const i of registry.listInstances()) if (i.profileId) instanceCounts.set(i.profileId, (instanceCounts.get(i.profileId) || 0) + 1);
     return {
       version,
       running: server.http.listening,
@@ -119,7 +123,7 @@ function createCore(options = {}) {
         lastSeen: server.lastSeen.get(i.id) || null,
       })),
       detectedProfiles: await profiles.detect(),
-      registeredProfiles: registry.listProfiles(),
+      registeredProfiles: registry.listProfiles().map((p) => ({ ...p, binding: registry.bindingOf(p.id), notes: noteCounts.get(p.id) || 0, instances: instanceCounts.get(p.id) || 0 })),
       loadWarnings: store.loadWarnings,
       sync: sync.getStatus(),
       trashCount: store.listTrash().length,
@@ -148,14 +152,39 @@ function createCore(options = {}) {
       changed();
       return true;
     },
-    // Correo del perfil escrito a mano (respaldo desde la app)
-    setEmail(profileId, email) {
-      const result = registry.setProfileEmail(String(profileId), String(email || ''));
-      if (!result || result.other) return result ? { error: 'email_in_use', otherId: result.other.id } : { error: 'invalid_email' };
+    // ----- cuentas -----
+    // Nombre y/o correo de una cuenta (el correo es solo una etiqueta)
+    updateProfile(profileId, patch) {
+      const profile = registry.updateProfile(String(profileId), { name: patch && patch.name, email: patch && patch.email });
+      if (!profile) return { error: 'invalid' };
       server.broadcastProfiles();
-      server._queueOthers([result.profile.id]);
+      server._queueOthers([profile.id]);
       changed();
       return { ok: true };
+    },
+    // Enlace local de una cuenta con un perfil de navegador de esta PC (dir vacío = quitar el enlace)
+    async setBinding(profileId, browser, dir) {
+      if (!registry.getProfile(String(profileId))) return { error: 'unknown_profile' };
+      if (!dir) registry.clearBinding(String(profileId));
+      else {
+        const detected = (await profiles.detect()).find((p) => p.browser === browser && p.dir === dir);
+        if (!detected) return { error: 'profile_not_found' };
+        registry.setBinding(String(profileId), String(browser), String(dir));
+      }
+      await registry.flush();
+      server.broadcastProfiles();
+      changed();
+      return { ok: true };
+    },
+    // Cambia la cuenta de una extensión ya emparejada
+    assignInstance(instanceId, profileId) {
+      if (!registry.getInstance(String(instanceId)) || !registry.getProfile(String(profileId))) return false;
+      registry.setInstanceProfile(String(instanceId), String(profileId));
+      registry.flush().catch(() => {});
+      server.broadcastProfiles();
+      server.notifyAccess(String(instanceId));
+      changed();
+      return true;
     },
     // Pasa todas las notas de un perfil a otro (p. ej. al cambiar de navegador o de equipo)
     mergeProfiles(fromId, intoId) {
@@ -256,17 +285,16 @@ function createCore(options = {}) {
       notify();
     },
     syncNow: () => sync.syncNow(),
-    newPairingCode: () => auth.createPairingCode(),
-    revokeInstance: (id) => auth.revoke(id),
-    renameProfile: async (id, name) => {
-      const profile = registry.renameProfile(id, String(name).trim().slice(0, 60));
-      if (profile) {
-        await registry.flush();
-        server.broadcastProfiles();
-        notify();
+    // profileId: cuenta existente · create: {name, email} para una cuenta nueva (se crea al emparejar)
+    newPairingCode: (opts = {}) => {
+      if (opts.profileId) {
+        if (!registry.getProfile(String(opts.profileId))) throw new Error('unknown_profile');
+        return auth.createPairingCode({ profileId: String(opts.profileId) });
       }
-      return profile;
+      if (opts.create) return auth.createPairingCode({ create: { name: String(opts.create.name || ''), email: String(opts.create.email || '') } });
+      return auth.createPairingCode();
     },
+    revokeInstance: (id) => auth.revoke(id),
   };
 }
 

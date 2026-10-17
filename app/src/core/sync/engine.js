@@ -10,14 +10,13 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const { JsonFile } = require('../jsonfile');
-const { BROWSERS, DIR_RE } = require('../profiles');
 
 const PROFILE_ID_RE = /^p_[0-9a-f]{12}$/;
 const PUSH_CHUNK = 400;
 
-const hashProfile = (p) => crypto.createHash('sha1').update(JSON.stringify([p.id, p.browser, p.dir, p.name, p.email, !!p.emailManual, p.sharing])).digest('hex');
+const hashProfile = (p) => crypto.createHash('sha1').update(JSON.stringify([p.id, p.name, p.email || '', p.sharing, p.mergedInto || ''])).digest('hex');
 const validProfile = (p) =>
-  p && PROFILE_ID_RE.test(p.id) && BROWSERS.includes(p.browser) && typeof p.dir === 'string' && (p.dir === '' || DIR_RE.test(p.dir)) && typeof p.name === 'string' && p.name.length > 0 && p.name.length <= 60;
+  p && PROFILE_ID_RE.test(p.id) && typeof p.name === 'string' && p.name.length > 0 && p.name.length <= 60;
 
 class SyncEngine extends EventEmitter {
   // remote: objeto con connect/fetchAll/push/listen/close (Firestore o un doble en pruebas)
@@ -66,7 +65,7 @@ class SyncEngine extends EventEmitter {
   }
 
   _pendingProfiles() {
-    return this.registry.listProfiles().filter((p) => this.state.profilesKnown[p.id] !== hashProfile(p));
+    return this.registry.listAllProfiles().filter((p) => this.state.profilesKnown[p.id] !== hashProfile(p));
   }
 
   _pendingPalette() {
@@ -214,10 +213,18 @@ class SyncEngine extends EventEmitter {
   _merge({ notes = [], profiles = [], palette = null }, { initial }) {
     const applied = { notes: [], palette: null, profiles: false };
 
+    const merges = [];
     for (const raw of profiles) {
       if (!validProfile(raw)) continue;
       this.state.profilesKnown[raw.id] = hashProfile(raw);
-      if (this.registry.importProfile(raw)) applied.profiles = true;
+      const result = this.registry.importProfile(raw);
+      if (result) applied.profiles = true;
+      if (result === 'merged') merges.push(raw.id);
+    }
+    // Una cuenta unida a otra en otro equipo: las notas que aquí aún apuntan a ella pasan a la cuenta resultante
+    for (const id of merges) {
+      const moved = this.store.reassignProfile(id, this.registry.resolveProfileId(id));
+      applied.notes.push(...moved);
     }
     if (applied.profiles) {
       this.file.markDirty();
@@ -226,6 +233,7 @@ class SyncEngine extends EventEmitter {
 
     for (const raw of notes) {
       if (!raw || typeof raw.id !== 'string') continue;
+      if (raw.profileId) raw.profileId = this.registry.resolveProfileId(raw.profileId); // cuenta ya unida a otra
       const remoteUpdated = Number.isFinite(raw.updatedAt) ? raw.updatedAt : 0;
       const local = this.store.get(raw.id);
       if (!local || remoteUpdated > local.updatedAt) {

@@ -81,16 +81,22 @@ function request(port, { method = 'GET', path: urlPath = '/', headers = {}, body
 // Por defecto la extensión queda asignada al perfil "Default" de Chrome (así varias comparten perfil y se ven entre sí).
 // Con profile: null se queda sin perfil asignado.
 async function pair(ctx, { origin = ORIGIN_A, browser = 'chrome', label = 'prueba', profile = { browser: 'chrome', dir: 'Default' } } = {}) {
-  const { code } = ctx.core.newPairingCode();
+  // La cuenta se elige al generar el código: se reutiliza la que ya esté enlazada a esa carpeta o se crea una nueva
+  let profileId = null;
+  if (profile) {
+    const bound = ctx.core.registry.profileAt(profile.browser, profile.dir);
+    if (bound) profileId = bound.id;
+    else {
+      const detected = (await ctx.core.profiles.detect()).find((p) => p.browser === profile.browser && p.dir === profile.dir);
+      const account = ctx.core.registry.createProfile({ name: profile.name || (detected && detected.name) || profile.dir, email: profile.email !== undefined ? profile.email : detected && detected.email });
+      ctx.core.registry.setBinding(account.id, profile.browser, profile.dir);
+      profileId = account.id;
+    }
+  }
+  const { code } = ctx.core.newPairingCode(profileId ? { profileId } : {});
   const res = await request(ctx.port, { method: 'POST', path: '/pair', origin, body: { code, browser, label } });
   if (res.status !== 201) throw new Error(`pair falló: ${res.status} ${res.text}`);
-  const out = { token: res.json.token, instanceId: res.json.instanceId, origin, profileId: null };
-  if (profile) {
-    const set = await request(ctx.port, { method: 'PUT', path: '/me/profile', origin, token: out.token, body: profile });
-    if (set.status !== 200) throw new Error(`perfil falló: ${set.status} ${set.text}`);
-    out.profileId = set.json.profile.id;
-  }
-  return out;
+  return { token: res.json.token, instanceId: res.json.instanceId, origin, profileId };
 }
 
 // Cliente WebSocket que acumula mensajes y permite esperar a uno concreto

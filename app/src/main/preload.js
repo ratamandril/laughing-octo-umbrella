@@ -5,7 +5,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('notasApp', {
   getState: () => ipcRenderer.invoke('state:get'),
-  newPairingCode: () => ipcRenderer.invoke('pairing:new'),
+  newPairingCode: (opts) => ipcRenderer.invoke('pairing:new', opts),
   cancelPairing: () => ipcRenderer.invoke('pairing:cancel'),
   revokeInstance: (id) => ipcRenderer.invoke('instance:revoke', id),
   listNotes: () => ipcRenderer.invoke('notes:list'),
@@ -17,7 +17,9 @@ contextBridge.exposeInMainWorld('notasApp', {
   restoreNote: (id) => ipcRenderer.invoke('trash:restore', id),
   purgeNote: (id) => ipcRenderer.invoke('trash:purge', id),
   emptyTrash: () => ipcRenderer.invoke('trash:empty'),
-  setEmail: (profileId, email) => ipcRenderer.invoke('profiles:email', profileId, email),
+  updateProfile: (profileId, patch) => ipcRenderer.invoke('profiles:update', profileId, patch),
+  bindProfile: (profileId, browser, dir) => ipcRenderer.invoke('profiles:bind', profileId, browser, dir),
+  assignInstance: (instanceId, profileId) => ipcRenderer.invoke('instances:assign', instanceId, profileId),
   mergeProfiles: (fromId, intoId) => ipcRenderer.invoke('profiles:merge', fromId, intoId),
   setSharing: (profileId, mode) => ipcRenderer.invoke('profiles:sharing', profileId, mode),
   chooseSyncKey: () => ipcRenderer.invoke('sync:choose-key'),
