@@ -93,23 +93,58 @@ function renderInstances(instances, current) {
 function renderProfiles(detected, registered) {
   const list = $('#profiles');
   list.replaceChildren();
-  $('#noProfiles').hidden = detected.length > 0;
+  $('#noProfiles').hidden = detected.length > 0 || registered.length > 0;
+  // Perfiles detectados que aún nadie usa
   for (const profile of detected) {
-    const assigned = registered.some((r) => r.browser === profile.browser && r.dir === profile.dir);
+    if (registered.some((r) => r.browser === profile.browser && r.dir === profile.dir)) continue;
     const row = el('div', 'row');
     const info = el('div', 'grow');
     info.append(el('div', 'strong', `${BROWSER_NAMES[profile.browser] || profile.browser} · ${profile.name}`));
     info.append(el('div', 'muted', [profile.dir, profile.email].filter(Boolean).join(' · ')));
-    row.append(info, el('span', 'tag' + (assigned ? ' ok' : ''), assigned ? 'asignado' : 'libre'));
+    row.append(info, el('span', 'tag', 'libre'));
     list.append(row);
   }
-  // Perfiles conocidos que ya no están en este equipo (otro PC, o el perfil cambió de correo)
-  for (const profile of registered.filter((r) => r.dir === '')) {
+  // Perfiles conocidos: correo (se puede escribir a mano) y unión de notas con otro perfil
+  const withNotes = new Set(notesData.notes.map((n) => n.profileId));
+  for (const profile of registered) {
+    const unlinked = profile.dir === '';
+    if (unlinked && !withNotes.has(profile.id) && !profile.email) continue;
     const row = el('div', 'row');
     const info = el('div', 'grow');
     info.append(el('div', 'strong', `${BROWSER_NAMES[profile.browser] || profile.browser} · ${profile.name}`));
-    info.append(el('div', 'muted', [profile.email, 'sin vincular en este equipo'].filter(Boolean).join(' · ')));
-    row.append(info, el('span', 'tag', 'sin vincular'));
+    info.append(el('div', 'muted', [unlinked ? 'sin vincular en este equipo' : profile.dir, profile.email || 'sin correo'].join(' · ')));
+
+    const mail = document.createElement('input');
+    mail.type = 'email';
+    mail.placeholder = 'Correo de este perfil';
+    mail.value = profile.email || '';
+    mail.className = 'mini-input';
+    const save = el('button', 'ghost', 'Guardar correo');
+    save.addEventListener('click', async () => {
+      const r = await window.notasApp.setEmail(profile.id, mail.value.trim());
+      if (r && r.error === 'email_in_use') {
+        flash('Ya hay otro perfil con ese correo. Usa «Pasar sus notas a…» para unirlos.', true);
+      } else if (r && r.error) flash('Correo no válido.', true);
+      refresh();
+    });
+    const move = document.createElement('select');
+    move.className = 'mini-input';
+    move.append(new Option('Pasar sus notas a…', ''));
+    for (const other of registered.filter((o) => o.id !== profile.id)) {
+      move.append(new Option(`${BROWSER_NAMES[other.browser] || other.browser} · ${other.name}${other.email ? ' (' + other.email + ')' : ''}`, other.id));
+    }
+    move.addEventListener('change', async () => {
+      if (!move.value) return;
+      const target = registered.find((o) => o.id === move.value);
+      if (confirm(`¿Pasar todas las notas de «${profile.name}» a «${target.name}»? Sus extensiones pasarán a ese perfil.`)) {
+        await window.notasApp.mergeProfiles(profile.id, move.value);
+      }
+      refresh();
+    });
+    const tools = el('div', 'access');
+    tools.append(mail, save, move);
+    info.append(tools);
+    row.append(info, el('span', 'tag' + (unlinked ? '' : ' ok'), unlinked ? 'sin vincular' : 'asignado'));
     list.append(row);
   }
 }

@@ -75,32 +75,30 @@ const Others = (() => {
 
     async function loadBody(id, { more = false } = {}) {
       let b = bodies.get(id);
-      if (!b || !more) b = { page: b ? b.page : null, list: b ? b.list : [], total: b ? b.total : 0, offset: 0, loading: true, error: '' };
+      const keep = b ? Math.min(Math.max(PAGE, b.offset), PAGE_NOTES_MAX) : PAGE; // al refrescar se conserva lo ya desplegado (hasta 50)
+      if (!b || !more) b = { page: b ? b.page : null, list: b ? b.list : [], total: b ? b.total : 0, offset: b ? b.offset : 0, loading: true, error: '' };
       else b.loading = true;
       bodies.set(id, b);
       draw();
       const gen = generation;
       try {
         if (query) {
-          if (more) {
-            const res = await Link.profileNotes(id, { q: query, offset: b.offset, limit: PAGE });
-            if (gen !== generation) return;
-            b.list = b.list.concat(res.notes);
-            b.offset += res.notes.length;
-            b.total = res.total;
-          }
+          const res = await Link.profileNotes(id, { q: query, offset: more ? b.offset : 0, limit: more ? PAGE : keep });
+          if (gen !== generation) return;
+          b.list = more ? b.list.concat(res.notes) : res.notes;
+          b.offset = (more ? b.offset : 0) + res.notes.length;
+          b.total = res.total;
         } else {
           const url = host.getUrl();
           const p = summary.find((x) => x.id === id);
-          if (!more) {
-            b.page = url && p && p.forUrl ? (await Link.profileNotes(id, { url, limit: PAGE_NOTES_MAX })).notes : [];
-            b.list = [];
-          }
-          const res = await Link.profileNotes(id, { offset: b.offset, limit: PAGE });
+          const page = !more && url && p && p.forUrl ? (await Link.profileNotes(id, { url, limit: PAGE_NOTES_MAX })).notes : (more ? b.page : []);
+          const res = await Link.profileNotes(id, { offset: more ? b.offset : 0, limit: more ? PAGE : keep });
           if (gen !== generation) return;
-          const onPage = new Set((b.page || []).map((n) => n.id));
-          b.list = b.list.concat(res.notes.filter((n) => !onPage.has(n.id)));
-          b.offset += res.notes.length;
+          const onPage = new Set((page || []).map((n) => n.id));
+          const fresh = res.notes.filter((n) => !onPage.has(n.id));
+          b.page = page;
+          b.list = more ? b.list.concat(fresh) : fresh;
+          b.offset = (more ? b.offset : 0) + res.notes.length;
           b.total = res.total;
         }
         b.error = '';
@@ -158,7 +156,7 @@ const Others = (() => {
         if (!query) wrap.append(el('h4', { class: 'op-sub' }, b.page && b.page.length ? 'Otras notas' : 'Todas las notas'));
         wrap.append(cards(b.list, p));
       }
-      if (b.loading) wrap.append(el('p', { class: 'muted op-state' }, 'Cargando…'));
+      if (b.loading && !b.list.length && !(b.page && b.page.length)) wrap.append(el('p', { class: 'muted op-state' }, 'Cargando…'));
       else if (!b.error && !b.list.length && !(b.page && b.page.length)) wrap.append(el('p', { class: 'muted op-state' }, 'Este perfil no tiene notas.'));
       if (!b.loading && b.offset < b.total) {
         wrap.append(el('button', { type: 'button', class: 'ghost op-more', onclick: () => loadBody(p.id, { more: true }) },
@@ -205,6 +203,13 @@ const Others = (() => {
       }
       if (host.scroller) host.scroller.scrollTop = top;
     }
+
+    // Red de seguridad por si se pierde un aviso (p. ej. el service worker estaba dormido): al volver a la ventana
+    // y cada 20 s mientras la página se ve, se vuelve a preguntar a la app. Es una consulta barata y sin parpadeo.
+    const again = () => { if (document.visibilityState === 'visible' && state !== 'idle' && !(typeof menuIsOpen === 'function' && menuIsOpen())) refresh(); };
+    document.addEventListener('visibilitychange', again);
+    window.addEventListener('focus', again);
+    setInterval(again, 20000);
 
     // Se redibuja con lo que ya hay (p. ej. al cambiar la vista de una nota)
     return { refresh, setQuery, redraw: draw, loadBody };

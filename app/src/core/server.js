@@ -118,6 +118,7 @@ class NotesServer extends EventEmitter {
       route('DELETE', /^\/me$/, true, (ctx) => this._unpair(ctx)),
       route('GET', /^\/profiles$/, true, (ctx) => this._profiles(ctx)),
       route('PUT', /^\/me\/profile$/, true, (ctx) => this._setProfile(ctx)),
+      route('PUT', /^\/me\/email$/, true, (ctx) => this._setEmail(ctx)),
       route('PUT', /^\/me\/sharing$/, true, (ctx) => this._setSharing(ctx)),
       route('PATCH', /^\/profiles\/([\w-]{1,64})$/, true, (ctx) => this._renameProfile(ctx)),
       route('GET', /^\/others$/, true, (ctx) => this._others(ctx)),
@@ -238,7 +239,12 @@ class NotesServer extends EventEmitter {
   }
 
   _profileList(instance) {
-    return this.registry.listProfiles().map((p) => this._profileView(instance, p));
+    // Un perfil sin vincular y sin notas (p. ej. uno que ya se unió a otro) no aporta nada a las extensiones
+    const used = new Set();
+    for (const n of this.store.notes.values()) if (!n.deleted && n.profileId) used.add(n.profileId);
+    return this.registry.listProfiles()
+      .filter((p) => p.dir !== '' || used.has(p.id) || (instance && p.id === instance.profileId))
+      .map((p) => this._profileView(instance, p));
   }
 
   // Avisa a una extensión de que cambió su flujo de notas: vuelve a sincronizar desde cero
@@ -451,6 +457,43 @@ class NotesServer extends EventEmitter {
     this.notifyAccess(ctx.instance.id);
     this.emit('change');
     return ok({ profile });
+  }
+
+  // Correo del perfil escrito a mano. Si otro perfil del mismo navegador ya lo tiene, hace falta confirmar (merge:true)
+  // para unir ambos: las notas de este pasan al perfil existente, que ocupa la carpeta de este.
+  async _setEmail(ctx) {
+    this._requireProfile(ctx.instance);
+    const email = typeof ctx.body.email === 'string' ? ctx.body.email.trim() : '';
+    const result = this.registry.setProfileEmail(ctx.instance.profileId, email);
+    if (!result) throw new HttpError(400, 'invalid_email');
+    let profile = result.profile;
+    let merged = false;
+    if (result.other) {
+      if (ctx.body.merge !== true) throw new HttpError(409, 'email_in_use');
+      profile = this.mergeProfiles(profile.id, result.other.id);
+      merged = true;
+    } else {
+      await this.registry.flush();
+      this.broadcastProfiles();
+      this._queueOthers([profile.id]);
+    }
+    this.emit('change');
+    return ok({ profile: this._profileView(ctx.instance, profile), merged });
+  }
+
+  // Pasa las notas e instancias de un perfil a otro (la extensión se resincroniza sola)
+  mergeProfiles(fromId, intoId) {
+    const movedInstances = this.registry.listInstances().filter((i) => i.profileId === fromId).map((i) => i.id);
+    const into = this.registry.mergeProfile(fromId, intoId);
+    if (!into) return null;
+    const moved = this.store.reassignProfile(fromId, intoId);
+    this.registry.flush();
+    this.broadcastProfiles();
+    for (const id of movedInstances) this.notifyAccess(id);
+    if (moved.length) this.broadcastNotes(moved);
+    this._queueOthers([fromId, intoId]);
+    this.emit('change');
+    return into;
   }
 
   // El dueño del perfil decide cómo lo comparte (desde Ajustes de su extensión o, como respaldo, desde la app)

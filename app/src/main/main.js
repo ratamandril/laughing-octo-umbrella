@@ -159,6 +159,8 @@ function registerIpc() {
   ipcMain.handle('trash:restore', (_event, id) => !!core.restoreNote(str(id)));
   ipcMain.handle('trash:purge', (_event, id) => !!core.purgeNote(str(id)));
   ipcMain.handle('trash:empty', () => core.emptyTrash());
+  ipcMain.handle('profiles:email', (_event, profileId, email) => core.setEmail(str(profileId), str(email)));
+  ipcMain.handle('profiles:merge', (_event, fromId, intoId) => core.mergeProfiles(str(fromId), str(intoId)));
   ipcMain.handle('profiles:sharing', (_event, profileId, mode) => core.setSharing(str(profileId), str(mode)));
   ipcMain.handle('sync:now', () => core.syncNow());
   ipcMain.handle('sync:disable', async () => {

@@ -584,6 +584,49 @@ describe('perfiles: cada uno escribe lo suyo y los demás consultan', () => {
     }
   });
 
+  test('el correo se puede escribir a mano y, si ya existe otro perfil con él, se unen las notas', async () => {
+    const { ctx, a, b, call } = await setup();
+    try {
+      await call(a, { method: 'PUT', path: '/notes/na', body: note('na', { title: 'del perfil A' }) });
+      await call(b, { method: 'PUT', path: '/notes/nb', body: note('nb', { title: 'del perfil B' }) });
+      assert.equal((await call(b, { method: 'PUT', path: '/me/email', body: { email: 'no es un correo' } })).status, 400);
+      const set = await call(b, { method: 'PUT', path: '/me/email', body: { email: 'Yo@Gmail.com' } });
+      assert.equal(set.status, 200);
+      assert.equal(set.json.profile.email, 'Yo@Gmail.com');
+      assert.equal(ctx.core.registry.getProfile(b.profileId).emailManual, true);
+      // el mismo correo en otro perfil del mismo navegador: pide confirmar
+      const clash = await call(a, { method: 'PUT', path: '/me/email', body: { email: 'yo@gmail.com' } });
+      assert.equal(clash.status, 200, 'distinto navegador: no choca');
+      const edge2 = await pair(ctx, { origin: 'chrome-extension://cccccccccccccccccccccccccccccccc', profile: { browser: 'edge', dir: 'Profile 2' } });
+      const need = await call(edge2, { method: 'PUT', path: '/me/email', body: { email: 'yo@gmail.com' } });
+      assert.equal(need.status, 409);
+      assert.equal(need.json.error, 'email_in_use');
+      await call(edge2, { method: 'PUT', path: '/notes/nc', body: note('nc', { title: 'del perfil nuevo' }) });
+      const merged = await call(edge2, { method: 'PUT', path: '/me/email', body: { email: 'yo@gmail.com', merge: true } });
+      assert.equal(merged.status, 200);
+      assert.equal(merged.json.merged, true);
+      assert.equal(merged.json.profile.id, b.profileId, 'queda el perfil que ya existía');
+      assert.equal(ctx.core.registry.getProfile(b.profileId).dir, 'Profile 1');
+      assert.deepEqual((await call(edge2, { path: '/notes' })).json.notes.map((n) => n.id).sort(), ['nb', 'nc']);
+      assert.equal(ctx.core.store.get('nc').profileId, b.profileId);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('desde la app: unir un perfil con otro pasa sus notas y los perfiles vacíos sin vincular se ocultan', async () => {
+    const { ctx, a, b, call } = await setup();
+    try {
+      await call(a, { method: 'PUT', path: '/notes/na', body: note('na') });
+      assert.ok(ctx.core.mergeProfiles(a.profileId, b.profileId));
+      assert.equal(ctx.core.store.get('na').profileId, b.profileId);
+      assert.deepEqual((await call(b, { path: '/notes' })).json.notes.map((n) => n.id), ['na']);
+      assert.equal((await call(a, { path: '/me' })).json.profile.id, b.profileId, 'la extensión de A pasa al perfil unido');
+    } finally {
+      await ctx.close();
+    }
+  });
+
   test('los cambios en vivo solo llegan a quien puede verlos', async () => {
     const { ctx, a, b, call } = await setup();
     try {

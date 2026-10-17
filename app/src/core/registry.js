@@ -102,7 +102,8 @@ class Registry {
       const sameDir = [...this.profiles.values()].find((p) => p.browser === browser && p.dir === dir);
       if (sameDir) {
         const known = String(sameDir.email || '').toLowerCase();
-        if (known && mail && known !== mail) sameDir.dir = ''; // era otra cuenta: queda sin vincular
+        // Con correo escrito a mano manda ese: la detección no lo cambia ni crea un perfil duplicado
+        if (!sameDir.emailManual && known && mail && known !== mail) sameDir.dir = ''; // era otra cuenta: queda sin vincular
         else found = sameDir;
       }
     }
@@ -110,7 +111,7 @@ class Registry {
       // La carpeta puede ser otra (otro equipo): solo se mueve si nadie más la ocupa
       if (found.dir !== dir && ![...this.profiles.values()].some((p) => p !== found && p.browser === browser && p.dir === dir)) found.dir = dir;
       if (name) found.name = name;
-      if (email && !found.email) found.email = email;
+      if (email && !found.email && !found.emailManual) found.email = email;
       if (!SHARING.includes(found.sharing)) found.sharing = DEFAULT_SHARING;
       this.file.markDirty();
       return found;
@@ -128,6 +129,37 @@ class Registry {
     return profile;
   }
 
+  // Correo escrito a mano (para perfiles donde el navegador no lo conoce, p. ej. una cuenta de Google en Edge)
+  // Si otro perfil del mismo navegador ya tiene ese correo, devuelve {profile, other} sin cambiar nada: lo decide quien llama
+  setProfileEmail(id, email) {
+    const profile = this.profiles.get(id);
+    const mail = String(email || '').trim();
+    if (!profile || (mail && !/^[^\s@]{1,64}@[^\s@]{1,255}$/.test(mail)) || mail.length > 254) return null;
+    const other = mail
+      ? [...this.profiles.values()].find((p) => p.id !== id && p.browser === profile.browser && String(p.email || '').toLowerCase() === mail.toLowerCase()) || null
+      : null;
+    if (other) return { profile, other };
+    profile.email = mail;
+    profile.emailManual = !!mail;
+    this.file.markDirty();
+    return { profile, other: null };
+  }
+
+  // Une el perfil `from` en `into`: sus instancias pasan a `into` y, si `into` no estaba vinculado en este equipo, hereda su carpeta
+  mergeProfile(fromId, intoId) {
+    const from = this.profiles.get(fromId);
+    const into = this.profiles.get(intoId);
+    if (!from || !into || from === into) return null;
+    if (into.dir === '' && from.dir && from.browser === into.browser) {
+      into.dir = from.dir;
+      from.dir = '';
+    }
+    for (const instance of this.instances.values()) if (instance.profileId === from.id) instance.profileId = into.id;
+    if (!into.email && from.email) { into.email = from.email; into.emailManual = !!from.emailManual; }
+    this.file.markDirty();
+    return into;
+  }
+
   setProfileSharing(id, mode) {
     const profile = this.profiles.get(id);
     if (!profile || !SHARING.includes(mode)) return null;
@@ -139,7 +171,7 @@ class Registry {
   // Perfil recibido de la sincronización: solo se añade si aún no existe ese id
   importProfile(profile) {
     if (this.profiles.has(profile.id)) return false;
-    this.profiles.set(profile.id, { id: profile.id, browser: profile.browser, dir: profile.dir, name: profile.name, email: profile.email || '', sharing: sharingOf(profile) });
+    this.profiles.set(profile.id, { id: profile.id, browser: profile.browser, dir: profile.dir, name: profile.name, email: profile.email || '', emailManual: !!profile.emailManual, sharing: sharingOf(profile) });
     this.file.markDirty();
     return true;
   }

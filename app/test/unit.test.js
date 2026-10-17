@@ -361,6 +361,17 @@ describe('perfiles por correo (registro)', () => {
     assert.equal(old.dir, 'Profile 2');
   });
 
+  test('con correo escrito a mano, la detección no lo cambia ni crea perfiles duplicados', () => {
+    const reg = make();
+    const p = reg.upsertProfile({ browser: 'edge', dir: 'Profile 1', name: 'Estudio', email: '' });
+    assert.equal(reg.setProfileEmail(p.id, 'yo@gmail.com').profile.emailManual, true);
+    const again = reg.upsertProfile({ browser: 'edge', dir: 'Profile 1', name: 'Estudio', email: 'otra@outlook.com' });
+    assert.equal(again.id, p.id);
+    assert.equal(again.email, 'yo@gmail.com');
+    assert.equal(reg.listProfiles().length, 1);
+    assert.equal(reg.setProfileEmail(p.id, 'malo'), null);
+  });
+
   test('sin correo (perfil sin sesión) se reutiliza por carpeta y no se pisa un correo ya guardado', () => {
     const reg = make();
     const a = reg.upsertProfile({ browser: 'chrome', dir: 'Default', name: 'Personal', email: 'a@x.com' });

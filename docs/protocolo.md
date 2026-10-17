@@ -24,6 +24,7 @@ La app escucha en `http://127.0.0.1:47321` (puerto configurable con `NOTAS_PORT`
 | `GET /profiles` | `{detected, registered}` (perfiles de Chrome/Edge del equipo) |
 | `PUT /me/profile {browser, dir, name?}` | asigna esta extensión a un perfil detectado |
 | `PATCH /profiles/:id {name}` | renombra un perfil |
+| `PUT /me/email {email, merge?}` | correo del perfil escrito a mano (la detección no lo cambia). Si otro perfil del mismo navegador ya lo tiene → `409 email_in_use`; con `merge:true` se unen: las notas de este pasan al perfil existente, que ocupa su carpeta |
 | `PUT /me/sharing {sharing}` | el dueño del perfil elige `private`, `read` (por defecto) o `edit` |
 | `GET /others?url=` | resumen de los demás perfiles: `{profiles:[{id, name, email, sharing, total, forUrl}]}`; los privados solo traen `id, browser, name, sharing` |
 | `GET /profiles/:id/notes?url=&q=&tag=&offset=&limit=` | notas de otro perfil, paginadas (20 por defecto, máx. 50) |
@@ -35,7 +36,7 @@ La app escucha en `http://127.0.0.1:47321` (puerto configurable con `NOTAS_PORT`
 | `GET/PUT /palette` | categorías de color (`{list}`) |
 | `POST /open {noteId}` o `{url, profileId}` | abre la URL en el navegador y perfil correctos |
 
-Errores: `{error: "<código>"}` con el estado HTTP correspondiente. Los endpoints de notas devuelven `409 profile_required` mientras la extensión no tenga perfil asignado, `403 profile_not_allowed` si intenta crear una nota para otro perfil, `403 read_only` si la nota es legible pero no editable (o borrarla), `404 not_found` si el perfil es privado, y `429 too_many_requests` si consulta demasiado (80 por 10 s).
+Errores: `{error: "<código>"}` con el estado HTTP correspondiente. Los endpoints de notas devuelven `409 profile_required` mientras la extensión no tenga perfil asignado, `403 profile_not_allowed` si intenta crear una nota para otro perfil, `403 read_only` si la nota es legible pero no editable (o borrarla), `404 not_found` si el perfil es privado, y `409 email_in_use`, `429 too_many_requests` si consulta demasiado (80 por 10 s).
 
 ## Visibilidad y papelera
 - **Modelo de lectura compartida.** El feed (`/notes`, WebSocket) trae solo las notas del propio perfil; la extensión solo guarda esas en su caché. Las notas de otros perfiles se piden a la app cuando hacen falta (`/others`, `/profiles/:id/notes`, `/search`) y no se guardan. Cada perfil elige su modo en Ajustes de la extensión (o en la app): `private` (los demás ven solo una fila bloqueada con el nombre), `read` o `edit` (otros pueden editar, nunca borrar). Se identifica el perfil por navegador y correo; si el correo cambia en la misma carpeta se crea un perfil nuevo y el anterior queda sin vincular (`dir:""`).

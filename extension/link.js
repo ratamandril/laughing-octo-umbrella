@@ -20,6 +20,8 @@ const Link = (() => {
     profile_not_found: 'La app no detecta ese perfil.',
     read_only: 'Ese perfil comparte sus notas solo para lectura.',
     too_many_requests: 'Demasiadas consultas seguidas. Espera un momento.',
+    invalid_email: 'Ese correo no es válido.',
+    email_in_use: 'Ya hay otro perfil con ese correo.',
     invalid_sharing: 'Modo de compartición no válido.',
   };
 
@@ -109,6 +111,7 @@ const Link = (() => {
   const search = (q, { tag, limit } = {}) => request('/search' + query({ q, tag, limit }));
   // Cómo comparte este perfil sus notas: 'private' | 'read' | 'edit'
   const setSharing = (mode) => request('/me/sharing', { method: 'PUT', body: { mode } });
+  const setEmail = (email, merge = false) => request('/me/email', { method: 'PUT', body: { email, merge } });
   // Edita una nota de otro perfil (solo si ese perfil lo permite); la app conserva al dueño
   const saveForeign = (note, patch) => request('/notes/' + encodeURIComponent(note.id), {
     method: 'PUT', body: { id: note.id, url: note.url, title: note.title, description: note.description, scope: note.scope, tags: note.tags, color: note.color, ...patch },
@@ -219,5 +222,5 @@ const Link = (() => {
     button.style.cursor = info.action ? 'pointer' : 'default';
   }
 
-  return { paintStatus, statusInfo, noteSafety, safetyContext, BASE, WS_URL, PORT, browserKind, browserLabel, get, save, request, pair, profiles, conn, openNote, others, profileNotes, search, setSharing, saveForeign, restart, unlink, STATE_TEXT };
+  return { paintStatus, statusInfo, noteSafety, safetyContext, BASE, WS_URL, PORT, browserKind, browserLabel, get, save, request, pair, profiles, conn, openNote, others, profileNotes, search, setSharing, setEmail, saveForeign, restart, unlink, STATE_TEXT };
 })();

@@ -15,7 +15,7 @@ const { BROWSERS, DIR_RE } = require('../profiles');
 const PROFILE_ID_RE = /^p_[0-9a-f]{12}$/;
 const PUSH_CHUNK = 400;
 
-const hashProfile = (p) => crypto.createHash('sha1').update(JSON.stringify([p.id, p.browser, p.dir, p.name, p.email, p.sharing])).digest('hex');
+const hashProfile = (p) => crypto.createHash('sha1').update(JSON.stringify([p.id, p.browser, p.dir, p.name, p.email, !!p.emailManual, p.sharing])).digest('hex');
 const validProfile = (p) =>
   p && PROFILE_ID_RE.test(p.id) && BROWSERS.includes(p.browser) && typeof p.dir === 'string' && (p.dir === '' || DIR_RE.test(p.dir)) && typeof p.name === 'string' && p.name.length > 0 && p.name.length <= 60;
 

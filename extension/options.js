@@ -97,12 +97,15 @@ async function renderLink() {
     const current = res.registered.find((p) => p.id === link.profileId);
     if (current) sel.value = current.dir;
     $('#sharingBox').hidden = !current;
+    $('#emailBox').hidden = !current;
+    if (current && document.activeElement !== $('#emailInput')) $('#emailInput').value = current.email || '';
     if (current) $('#sharingSel').value = current.sharing || 'read';
     sel.disabled = false;
   } catch (err) {
     sel.replaceChildren(new Option(err.offline ? 'La app no está abierta' : err.message, ''));
     sel.disabled = true;
     $('#sharingBox').hidden = true;
+    $('#emailBox').hidden = true;
   }
 
   // Notas de antes de conectar: se ofrecen una sola vez
@@ -139,6 +142,34 @@ $('#saveProfile').addEventListener('click', async () => {
     await chrome.storage.local.set({ syncSeq: 0 }); // el perfil cambió: se vuelve a sincronizar todo
     Link.restart(); // empieza a sincronizar las notas de ese perfil
     linkMsg('Perfil guardado: ' + res.profile.name + '.');
+  } catch (err) {
+    linkMsg(err.message, true);
+  }
+  renderLink();
+});
+
+async function followProfile(profile) {
+  // La app unió este perfil con otro: la extensión pasa al perfil resultante y se resincroniza
+  const link = await NotesStore.getLink();
+  if (!link || link.profileId === profile.id) return;
+  await Link.save({ ...link, profileId: profile.id });
+  await chrome.storage.local.set({ syncSeq: 0 });
+  Link.restart();
+}
+
+$('#saveEmail').addEventListener('click', async () => {
+  const email = $('#emailInput').value.trim();
+  try {
+    let res;
+    try {
+      res = await Link.setEmail(email);
+    } catch (err) {
+      if (err.code !== 'email_in_use') throw err;
+      if (!confirm('Ya existe un perfil con ese correo (de otro equipo o de antes). ¿Unir este perfil con él? Sus notas pasarán a ser de un solo perfil.')) return;
+      res = await Link.setEmail(email, true);
+    }
+    await followProfile(res.profile);
+    linkMsg(res.merged ? 'Perfiles unidos: ahora este navegador usa las notas de ' + email + '.' : email ? 'Correo guardado.' : 'Correo borrado.');
   } catch (err) {
     linkMsg(err.message, true);
   }

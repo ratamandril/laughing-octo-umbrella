@@ -261,6 +261,30 @@ const profiles = {
   assert.equal(nueva().profileId, profA.id, 'la nota sigue siendo de A');
   core.setSharing(profA.id, 'read');
   await until(async () => (await pa.evaluate(() => chrome.storage.local.get(null)))[`n_${nueva().id}`]?.title === 'Nueva de A (editada en B)', 'A recibe la edición');
+  // Con el perfil plegado, el contador también se actualiza solo (crear y borrar en A)
+  await popup.click('#others .op-head');
+  assert.equal(await popup.locator('#others article').count(), 0, 'plegado');
+  const total = async () => (await popup.textContent('#others .op-count')).trim();
+  const before = await total();
+  await pa.evaluate(() => NotesStore.save(NotesStore.create({ title: 'Otra de A', description: '', url: 'https://example.com/o', scope: 'page', tags: [] })));
+  await until(async () => (await total()) !== before, 'el contador sube con el perfil plegado');
+  const mid = await total();
+  const otra = core.store.since(0).find((n) => n.title === 'Otra de A');
+  await pa.evaluate((id) => NotesStore.remove(id), otra.id);
+  await until(async () => (await total()) !== mid, 'el contador baja al borrar');
+  // Un perfil desplegado también se actualiza al editar
+  await popup.click('#others .op-head');
+  await pa.evaluate((id) => NotesStore.update(id, { title: 'Editada otra vez en A' }), nueva().id);
+  await popup.waitForSelector('#others article:has-text("Editada otra vez en A")', { timeout: 15000 });
+
+  console.log('7d. Correo escrito a mano en Ajustes');
+  await pb.goto(B.url('options.html'));
+  await pb.waitForSelector('#emailBox:not([hidden])');
+  await pb.fill('#emailInput', 'manual@gmail.com');
+  await pb.click('#saveEmail');
+  await pb.waitForFunction(() => document.querySelector('#linkMsg').textContent.includes('Correo guardado'));
+  assert.equal(core.registry.getProfile(profB.id).email, 'manual@gmail.com');
+  assert.equal(core.registry.getProfile(profB.id).emailManual, true);
   await popup.close();
   await site.close();
   web.closeAllConnections(); await new Promise((r) => web.close(r));

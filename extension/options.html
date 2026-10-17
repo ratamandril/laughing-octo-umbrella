@@ -35,6 +35,14 @@
         <label for="profileSel">Este navegador es el perfil…</label>
         <select id="profileSel"></select>
       </div>
+      <div class="field" id="emailBox" hidden>
+        <label for="emailInput">Correo de este perfil</label>
+        <div class="row">
+          <input id="emailInput" type="email" placeholder="tucuenta@gmail.com" autocomplete="off" spellcheck="false">
+          <button class="ghost" id="saveEmail">Guardar correo</button>
+        </div>
+        <p class="muted">Si el navegador no sabe con qué cuenta usas este perfil (p. ej. una cuenta de Google en Edge), escríbela aquí. Así este perfil se reconoce en otro equipo y sus notas lo siguen.</p>
+      </div>
       <div class="field" id="sharingBox" hidden>
         <label for="sharingSel">Qué pueden hacer los otros perfiles con mis notas</label>
         <select id="sharingSel">

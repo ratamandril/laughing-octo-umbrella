@@ -108,6 +108,19 @@ class Store {
     return { note: stored, created: !prev || prev.deleted };
   }
 
+  // Pasa todas las notas (también las de la papelera) de un perfil a otro. Devuelve las notas movidas.
+  reassignProfile(fromId, intoId) {
+    const moved = [];
+    for (const note of [...this.notes.values()]) {
+      if (note.profileId !== fromId) continue;
+      const stored = { ...note, profileId: intoId, updatedAt: Math.max(this.now(), note.updatedAt + 1), seq: ++this.seq };
+      this.notes.set(stored.id, stored);
+      moved.push(stored);
+    }
+    if (moved.length) this.file.markDirty();
+    return moved;
+  }
+
   // Manda a la papelera: la nota queda marcada como borrada pero conserva su contenido.
   // Devuelve la nota o null si no existía.
   remove(id) {

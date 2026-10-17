@@ -148,6 +148,21 @@ function createCore(options = {}) {
       changed();
       return true;
     },
+    // Correo del perfil escrito a mano (respaldo desde la app)
+    setEmail(profileId, email) {
+      const result = registry.setProfileEmail(String(profileId), String(email || ''));
+      if (!result || result.other) return result ? { error: 'email_in_use', otherId: result.other.id } : { error: 'invalid_email' };
+      server.broadcastProfiles();
+      server._queueOthers([result.profile.id]);
+      changed();
+      return { ok: true };
+    },
+    // Pasa todas las notas de un perfil a otro (p. ej. al cambiar de navegador o de equipo)
+    mergeProfiles(fromId, intoId) {
+      const into = server.mergeProfiles(String(fromId), String(intoId));
+      if (into) changed();
+      return !!into;
+    },
     // Abre la nota en su navegador y perfil (desde la propia app)
     openNote: (id) => server.openTarget({ noteId: String(id) }),
 
