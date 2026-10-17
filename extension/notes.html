@@ -21,6 +21,7 @@
 
   <div class="row grow">
     <input id="search" placeholder="Buscar por título, descripción, URL o etiqueta…">
+    <label class="p-global" id="globalWrap" hidden><input type="checkbox" id="globalSearch"> Buscar también en los otros perfiles</label>
     <select id="fColor"></select>
     <select id="fTag"></select>
     <select id="fProfile" hidden></select>
@@ -58,6 +59,7 @@
   </div>
   <div id="count" class="muted" style="margin-top:8px"></div>
   <section id="list"></section>
+  <section id="others" class="others" hidden></section>
 
   <dialog id="dlg">
     <h2>Editar nota</h2>
@@ -80,6 +82,7 @@
   <script src="storage.js"></script>
   <script src="link.js"></script>
   <script src="ui.js"></script>
+  <script src="others.js"></script>
   <script src="notes.js"></script>
 </body>
 </html>

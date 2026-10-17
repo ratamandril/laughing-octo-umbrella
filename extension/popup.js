@@ -20,6 +20,8 @@ const PAGE_SIZE = 100;
 let sections = { page: true, all: false }; // secciones desplegadas (se recuerdan)
 try { sections = { ...sections, ...JSON.parse(localStorage.getItem('sections') || '{}') }; } catch { /* sin caché */ }
 let link = null; // enlace con la app (null si la extensión no está conectada)
+let editingForeign = null; // nota de otro perfil que se está editando (solo si ese perfil lo permite)
+let searchTimer = null;
 let profiles = [];
 const viewOverride = new Map(); // id de nota -> vista temporal
 
@@ -96,6 +98,7 @@ async function init() {
   fillSettingsPanel();
 
   const linked = !!link;
+  othersCtl.refresh();
   $('#unlinked').hidden = linked;
   document.querySelector('.p-search').hidden = !linked;
   $('#listWrap').hidden = !linked;
@@ -174,8 +177,6 @@ async function render() {
 }
 
 function cardOptions(n) {
-  // Con una sola persona/perfil visible no hace falta mostrar el perfil
-  const multi = !!link && profiles.length > 1;
   const mode = viewOverride.get(n.id) || settings.view;
   return {
     mode, palette,
@@ -184,7 +185,6 @@ function cardOptions(n) {
     onCycle: settings.view === 'simple' ? cycleNote : null,
     onView: setNoteView,
     onNotice: notice,
-    profiles: multi ? profiles : null, myProfileId: link && link.profileId, onOpen: openInProfile,
     safety: Link.noteSafety(n, safetyCtx),
   };
 }
@@ -213,7 +213,28 @@ function drawAll() {
   wrap.scrollTop = top;
 }
 
-function redraw() { draw(); drawAll(); }
+function redraw() { draw(); drawAll(); othersCtl.redraw(); }
+
+// Tarjeta de una nota de otro perfil: solo lectura, salvo que ese perfil permita editar (nunca eliminar)
+function foreignCard(note, profile) {
+  return noteCard(note, {
+    mode: viewOverride.get(note.id) || settings.view, palette,
+    onEdit: profile.sharing === 'edit' ? (n) => startEdit(n, profile) : null,
+    onCycle: settings.view === 'simple' ? cycleNote : null,
+    onView: setNoteView,
+    onNotice: notice,
+    profiles: [profile], myProfileId: link && link.profileId, onOpen: openInProfile,
+  });
+}
+
+// Notas de otros perfiles: se piden a la app al abrir, al desplegar y cuando la app avisa de un cambio
+const othersCtl = Others.mount({
+  box: $('#others'),
+  scroller: $('#listWrap'),
+  getUrl: () => (tab && NotesStore.isSupported(tab.url) ? tab.url : null),
+  makeCard: foreignCard,
+  onState: ({ profiles }) => { $('#globalWrap').hidden = !profiles; },
+});
 
 let noticeTimer = null;
 function notice(text, isError = false) {
@@ -261,22 +282,30 @@ function scheduleRefresh(reloadPalette = false) {
     render();
   }, 120);
 }
+let othersTimer = null;
+function scheduleOthers() {
+  clearTimeout(othersTimer);
+  othersTimer = setTimeout(() => (menuIsOpen() ? scheduleOthers() : othersCtl.refresh()), 300);
+}
 chrome.storage.onChanged.addListener((changes, area) => {
   if (!tab) return;
   if (area === 'session') {
     paintConn();
     if (changes.cloud || changes.conn) scheduleRefresh(); // los avisos "sin subir" dependen de la nube
+    if (changes.othersTick) scheduleOthers(); // otro perfil cambió algo que este puede ver
     return;
   }
   if (area !== 'local') return;
   const keys = Object.keys(changes);
   if (keys.includes('outbox') || keys.includes('link')) paintConn();
   if (keys.some((k) => k.startsWith('n_') || ['palette', 'profiles', 'link', 'outbox'].includes(k))) scheduleRefresh(keys.includes('palette'));
+  if (keys.includes('profiles') || keys.includes('link')) scheduleOthers();
 });
 
 // ---------- Formulario ----------
-function startEdit(note) {
+function startEdit(note, foreignProfile = null) {
   editingId = note.id;
+  editingForeign = foreignProfile ? note : null;
   $('#title').value = note.title;
   $('#description').value = note.description;
   $('#tags').value = note.tags.join(', ');
@@ -285,7 +314,7 @@ function startEdit(note) {
   drawSwatches();
   $('#form').classList.remove('collapsed'); // al editar, el formulario debe verse
   $('#toggleForm').textContent = '▾';
-  $('#formTitle').textContent = 'Editar nota';
+  $('#formTitle').textContent = foreignProfile ? 'Editar nota de ' + foreignProfile.name : 'Editar nota';
   $('#cancelBtn').hidden = false;
   $('#title').focus();
 }
@@ -293,6 +322,7 @@ function startEdit(note) {
 // Deja el formulario listo para una nota nueva, con etiquetas/color recordados si está activado
 function resetForm() {
   editingId = null;
+  editingForeign = null;
   $('#title').value = '';
   $('#description').value = '';
   $('#tags').value = rememberedTags();
@@ -318,6 +348,13 @@ $('#form').addEventListener('submit', async (e) => {
   const scope = $('#scope').value;
   const tags = NotesStore.parseTags($('#tags').value);
   try {
+    if (editingId && editingForeign) {
+      const owner = editingForeign.profileId;
+      await Link.saveForeign(editingForeign, { title, description, scope, tags, color: selectedColor });
+      resetForm();
+      othersCtl.loadBody(owner);
+      return;
+    }
     if (editingId) {
       await NotesStore.update(editingId, { title, description, scope, tags, color: selectedColor });
     } else {
@@ -340,7 +377,13 @@ $('#cancelBtn').addEventListener('click', resetForm);
 $('#toggleForm').addEventListener('click', () => setSetting({ formCollapsed: !settings.formCollapsed }));
 
 // ---------- Filtros y navegación ----------
-$('#search').addEventListener('input', (e) => { query = e.target.value; allLimit = PAGE_SIZE; render(); });
+// La búsqueda actúa sobre este perfil; con el interruptor activo también sobre los demás (se pide a la app)
+function syncGlobalSearch() {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => othersCtl.setQuery($('#globalSearch').checked ? query : ''), 250);
+}
+$('#search').addEventListener('input', (e) => { query = e.target.value; allLimit = PAGE_SIZE; render(); syncGlobalSearch(); });
+$('#globalSearch').addEventListener('change', syncGlobalSearch);
 $('#pageHead').addEventListener('click', () => toggleSection('page'));
 $('#allHead').addEventListener('click', () => toggleSection('all'));
 $('#moreAll').addEventListener('click', () => { allLimit += PAGE_SIZE; drawAll(); });

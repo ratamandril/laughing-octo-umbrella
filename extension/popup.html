@@ -25,6 +25,7 @@
 
   <div class="p-search">
     <input id="search" type="search" placeholder="Buscar en las notas…" aria-label="Buscar en las notas" autocomplete="off">
+    <label id="globalWrap" class="p-global" hidden><input type="checkbox" id="globalSearch"> Buscar también en los otros perfiles</label>
   </div>
   <div id="filters" class="p-filters" hidden>
     <select id="fColor" class="mini"></select>
@@ -53,6 +54,7 @@
         <p id="allEmpty" class="muted" hidden>No hay otras notas.</p>
       </div>
     </section>
+    <section id="others" class="others" hidden></section>
   </main>
 
   <!-- Zona fija -->
@@ -133,6 +135,7 @@
   <script src="storage.js"></script>
   <script src="link.js"></script>
   <script src="ui.js"></script>
+  <script src="others.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

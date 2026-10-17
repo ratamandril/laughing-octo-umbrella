@@ -155,3 +155,21 @@ button:focus-visible, .card:focus-visible { outline:2px solid var(--accent); out
 .group-sec.collapsed .group-body { display:none; }
 .group-sec.collapsed .chev { transform:rotate(-90deg); }
 .group-sec .sec-head .chev { transition:transform .12s; }
+
+/* ---- Notas de otros perfiles (se piden a la app) ---- */
+.p-global { display:flex; align-items:center; gap:.4rem; margin:.25rem 0 0; font-size:.82rem; color:var(--muted); cursor:pointer; }
+.p-global input { margin:0; width:auto; }
+.others { margin-top:.6rem; padding-top:.4rem; border-top:1px solid var(--line, rgba(128,128,128,.25)); }
+.others-title { margin:.2rem 0 .3rem; font-size:.8rem; font-weight:600; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); }
+.op { margin-bottom:.25rem; }
+.op-head { flex-wrap:wrap; font-size:.95rem; }
+.op-head.static { cursor:default; }
+.op-name { font-weight:500; }
+.op-email, .op-count { font-size:.78rem; font-family:var(--sans, inherit); }
+.op-count { margin-left:auto; }
+.op.locked { padding:.35rem 0; font-size:.92rem; color:var(--muted); }
+.op.locked .op-email { margin-left:.4rem; }
+.op-body { padding-left:1rem; }
+.op-sub { margin:.4rem 0 .2rem; font-size:.78rem; font-weight:600; color:var(--muted); }
+.op-state, .op-offline { margin:.3rem 0; font-size:.85rem; }
+.op-more { margin:.3rem 0; }

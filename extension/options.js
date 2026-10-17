@@ -96,10 +96,13 @@ async function renderLink() {
     sel.replaceChildren(new Option('— elige —', ''), ...mine.map((p) => new Option(p.name + (p.email ? ' (' + p.email + ')' : '') + ' — ' + p.dir, p.dir)));
     const current = res.registered.find((p) => p.id === link.profileId);
     if (current) sel.value = current.dir;
+    $('#sharingBox').hidden = !current;
+    if (current) $('#sharingSel').value = current.sharing || 'read';
     sel.disabled = false;
   } catch (err) {
     sel.replaceChildren(new Option(err.offline ? 'La app no está abierta' : err.message, ''));
     sel.disabled = true;
+    $('#sharingBox').hidden = true;
   }
 
   // Notas de antes de conectar: se ofrecen una sola vez
@@ -133,8 +136,19 @@ $('#saveProfile').addEventListener('click', async () => {
     const res = await Link.request('/me/profile', { method: 'PUT', body: { browser: Link.browserKind(), dir } });
     const link = await NotesStore.getLink();
     await Link.save({ ...link, profileId: res.profile.id });
+    await chrome.storage.local.set({ syncSeq: 0 }); // el perfil cambió: se vuelve a sincronizar todo
     Link.restart(); // empieza a sincronizar las notas de ese perfil
     linkMsg('Perfil guardado: ' + res.profile.name + '.');
+  } catch (err) {
+    linkMsg(err.message, true);
+  }
+  renderLink();
+});
+
+$('#sharingSel').addEventListener('change', async () => {
+  try {
+    await Link.setSharing($('#sharingSel').value);
+    linkMsg('Guardado: ' + $('#sharingSel').selectedOptions[0].textContent.split(':')[0].split(',')[0] + '.');
   } catch (err) {
     linkMsg(err.message, true);
   }

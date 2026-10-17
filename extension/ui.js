@@ -41,8 +41,8 @@ function swatchPicker(box, palette, selected, onChange) {
 // mode: "simple" | "normal" | "detailed"
 const BROWSER_NAMES = { chrome: 'Chrome', edge: 'Edge' };
 
-function profileLabel(profile) {
-  return (BROWSER_NAMES[profile.browser] || 'Navegador') + ' · ' + profile.name;
+function profileLabel(profile, withEmail = false) {
+  return (BROWSER_NAMES[profile.browser] || 'Navegador') + ' · ' + profile.name + (withEmail && profile.email ? ' · ' + profile.email : '');
 }
 
 // ---------- Menú "Opciones" de cada nota ----------
@@ -165,14 +165,18 @@ function noteCard(note, { mode = 'normal', palette = [], onEdit, onDelete, onTag
     ];
     if (foreign) items.push({ label: 'Abrir en su perfil (' + profileLabel(profile) + ')', onclick: () => onOpen(note) });
     items.push({ label: 'Copiar URL', onclick: async () => { const ok = await copyText(note.url); if (onNotice) onNotice(ok ? 'URL copiada.' : 'No se pudo copiar.', !ok); } });
-    items.push({ separator: true });
-    items.push({ label: 'Editar', onclick: () => onEdit(note) });
+    if (onEdit) {
+      items.push({ separator: true });
+      items.push({ label: 'Editar', onclick: () => onEdit(note) });
+    }
     if (onView) {
       items.push({ separator: true });
       for (const m of ['simple', 'normal', 'detailed']) items.push({ label: VIEW_LABELS[m], checked: m === mode, onclick: () => onView(note, m) });
     }
-    items.push({ separator: true });
-    items.push({ label: 'Eliminar', danger: true, onclick: () => onDelete(note) });
+    if (onDelete) {
+      items.push({ separator: true });
+      items.push({ label: 'Eliminar', danger: true, onclick: () => onDelete(note) });
+    }
     showMenu(menuBtn, items);
   });
   const actions = el('span', { class: 'actions' }, menuBtn);
@@ -209,7 +213,7 @@ function noteCard(note, { mode = 'normal', palette = [], onEdit, onDelete, onTag
     card.querySelector('.dot').style.background = cat.hex;
   }
 
-  if (profile) card.append(el('div', { class: 'profile-line muted' }, profileLabel(profile) + (note.profileId === myProfileId ? ' (este perfil)' : '')));
+  if (profile) card.append(el('div', { class: 'profile-line muted' }, profileLabel(profile, true) + (note.profileId === myProfileId ? ' (este perfil)' : '')));
   if (note.description) card.append(el('p', { class: 'desc' }, note.description));
   if (urlLink) card.append(urlLink);
   if (tags) card.append(tags);

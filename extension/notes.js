@@ -5,6 +5,7 @@ let editing = null;
 let eColor = null;
 let link = null;
 let profiles = [];
+let editingForeign = null; // nota de otro perfil (solo si ese perfil permite editar)
 
 async function load() {
   [all, palette, link, profiles, safetyCtx] = await Promise.all([NotesStore.getAll(), NotesStore.getPalette(), NotesStore.getLink(), Link.profiles(), Link.safetyContext()]);
@@ -12,6 +13,7 @@ async function load() {
   $('#exportBtn').hidden = $('#importBtn').hidden = !link;
   fillFilters();
   render();
+  othersCtl.refresh();
 }
 
 function fillFilters() {
@@ -75,15 +77,43 @@ function cardOptions(n) {
   };
 }
 
+function foreignCard(note, profile) {
+  const mode = viewOverride.get(note.id) || prefs.view;
+  return noteCard(note, {
+    mode, palette, showUrl: true,
+    onEdit: profile.sharing === 'edit' ? (n) => openEdit(n, profile) : null,
+    onCycle: prefs.view === 'simple' ? cycleNote : null,
+    onView: setNoteView,
+    onNotice: (text, isError) => msg(text, isError),
+    profiles: [profile], myProfileId: link && link.profileId, onOpen: openInProfile,
+  });
+}
+
+const othersCtl = Others.mount({
+  box: $('#others'),
+  getUrl: () => null,
+  makeCard: foreignCard,
+  onState: ({ profiles: n }) => { $('#globalWrap').hidden = !n; },
+});
+
+function syncGlobalSearch() {
+  othersCtl.setQuery($('#globalSearch').checked ? $('#search').value : '');
+}
+let globalTimer = null;
+$('#search').addEventListener('input', () => { clearTimeout(globalTimer); globalTimer = setTimeout(syncGlobalSearch, 250); });
+$('#globalSearch').addEventListener('change', syncGlobalSearch);
+
 function cycleNote(note) {
   const next = NEXT_VIEW[viewOverride.get(note.id) || 'simple'];
   if (next === 'simple') viewOverride.delete(note.id); else viewOverride.set(note.id, next);
   render();
+  othersCtl.redraw();
 }
 
 function setNoteView(note, mode) {
   if (mode === prefs.view) viewOverride.delete(note.id); else viewOverride.set(note.id, mode);
   render();
+  othersCtl.redraw();
 }
 
 // Con una sola persona/perfil visible no hace falta mostrar ni filtrar por perfil
@@ -170,8 +200,10 @@ async function openInProfile(note) {
   }
 }
 
-function openEdit(note) {
+function openEdit(note, foreignProfile = null) {
   editing = note;
+  editingForeign = foreignProfile ? note : null;
+  $('#dlg h2').textContent = foreignProfile ? 'Editar nota de ' + profileLabel(foreignProfile) : 'Editar nota';
   eColor = note.color;
   $('#eTitle').value = note.title;
   $('#eDesc').value = note.description;
@@ -195,13 +227,20 @@ function msg(text, isError = false) {
 
 $('#eSave').addEventListener('click', async () => {
   try {
-    await NotesStore.update(editing.id, {
+    const patch = {
       title: $('#eTitle').value.trim() || editing.title,
       description: $('#eDesc').value.trim(),
       scope: $('#eScope').value,
       tags: NotesStore.parseTags($('#eTags').value),
       color: eColor,
-    });
+    };
+    if (editingForeign) {
+      await Link.saveForeign(editingForeign, patch);
+      $('#dlg').close();
+      othersCtl.refresh();
+      return;
+    }
+    await NotesStore.update(editing.id, patch);
     $('#dlg').close();
   } catch (err) {
     $('#eError').textContent = 'No se pudo guardar: ' + err.message;
@@ -245,8 +284,16 @@ function scheduleLoad() {
   clearTimeout(reloadTimer);
   reloadTimer = setTimeout(() => (menuIsOpen() ? scheduleLoad() : load()), 150);
 }
+let othersTimer = null;
+function scheduleOthers() {
+  clearTimeout(othersTimer);
+  othersTimer = setTimeout(() => (menuIsOpen() ? scheduleOthers() : othersCtl.refresh()), 300);
+}
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'session') Link.paintStatus($('#conn'), () => openPage('options.html'));
+  if (area === 'session') {
+    Link.paintStatus($('#conn'), () => openPage('options.html'));
+    if (changes.othersTick) { scheduleOthers(); return; }
+  }
   scheduleLoad();
 });
 

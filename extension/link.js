@@ -18,6 +18,9 @@ const Link = (() => {
     not_found: 'No encontrado en la app.',
     too_many_opens: 'Demasiadas aperturas seguidas. Espera un momento.',
     profile_not_found: 'La app no detecta ese perfil.',
+    read_only: 'Ese perfil comparte sus notas solo para lectura.',
+    too_many_requests: 'Demasiadas consultas seguidas. Espera un momento.',
+    invalid_sharing: 'Modo de compartición no válido.',
   };
 
   const browserKind = () => (navigator.userAgent.includes('Edg/') ? 'edge' : 'chrome');
@@ -93,6 +96,23 @@ const Link = (() => {
       return { state: 'unknown' };
     }
   }
+
+  // ---- Notas de otros perfiles: se piden a la app y no se guardan aquí ----
+  const query = (params) => {
+    const u = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== '') u.set(k, String(v));
+    const s = u.toString();
+    return s ? '?' + s : '';
+  };
+  const others = (url) => request('/others' + query({ url }));
+  const profileNotes = (id, { url, q, tag, offset, limit } = {}) => request('/profiles/' + encodeURIComponent(id) + '/notes' + query({ url, q, tag, offset, limit }));
+  const search = (q, { tag, limit } = {}) => request('/search' + query({ q, tag, limit }));
+  // Cómo comparte este perfil sus notas: 'private' | 'read' | 'edit'
+  const setSharing = (mode) => request('/me/sharing', { method: 'PUT', body: { mode } });
+  // Edita una nota de otro perfil (solo si ese perfil lo permite); la app conserva al dueño
+  const saveForeign = (note, patch) => request('/notes/' + encodeURIComponent(note.id), {
+    method: 'PUT', body: { id: note.id, url: note.url, title: note.title, description: note.description, scope: note.scope, tags: note.tags, color: note.color, ...patch },
+  });
 
   // Abre una nota en su navegador y perfil (lo hace la app)
   function openNote(noteId) {
@@ -199,5 +219,5 @@ const Link = (() => {
     button.style.cursor = info.action ? 'pointer' : 'default';
   }
 
-  return { paintStatus, statusInfo, noteSafety, safetyContext, BASE, WS_URL, PORT, browserKind, browserLabel, get, save, request, pair, profiles, conn, openNote, restart, unlink, STATE_TEXT };
+  return { paintStatus, statusInfo, noteSafety, safetyContext, BASE, WS_URL, PORT, browserKind, browserLabel, get, save, request, pair, profiles, conn, openNote, others, profileNotes, search, setSharing, saveForeign, restart, unlink, STATE_TEXT };
 })();

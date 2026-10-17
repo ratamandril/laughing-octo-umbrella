@@ -113,6 +113,13 @@ const Sync = (() => {
     if (Array.isArray(list)) await local.set({ profiles: list });
   }
 
+  // Las páginas de la extensión escuchan esta marca para volver a pedir las notas de otros perfiles a la app
+  async function tickOthers() {
+    try {
+      await chrome.storage.session.set({ othersTick: Date.now() });
+    } catch { /* storage.session no disponible */ }
+  }
+
   async function bumpSeq(seq) {
     if (!Number.isInteger(seq)) return;
     const { syncSeq = 0 } = await local.get('syncSeq');
@@ -242,6 +249,9 @@ const Sync = (() => {
             await applyPalette(msg.palette);
           } else if (msg.type === 'profiles') {
             await storeProfiles(msg.profiles);
+            await tickOthers();
+          } else if (msg.type === 'others') {
+            await tickOthers(); // otro perfil que este puede ver cambió algo: las vistas abiertas lo vuelven a pedir
           } else if (msg.type === 'status') {
             await setCloud(msg.cloud);
           } else if (msg.type === 'access') {
@@ -361,7 +371,7 @@ const Sync = (() => {
           if (err.status === 400) {
             console.warn('[notas] la app rechazó una nota; se descarta de la cola', p.id, err.code);
             await settle({ notes: { [p.id]: p.t } });
-          } else if (err.code === 'not_found' || err.code === 'profile_not_allowed') {
+          } else if (err.code === 'not_found' || err.code === 'profile_not_allowed' || err.code === 'read_only') {
             // La nota es de otro perfil (o de uno que no puede ver): no se queda como copia propia
             console.warn('[notas] esa nota pertenece a otro perfil; se quita de este', p.id);
             await rejectNotes({ [p.id]: p.t });

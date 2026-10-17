@@ -35,6 +35,15 @@
         <label for="profileSel">Este navegador es el perfil…</label>
         <select id="profileSel"></select>
       </div>
+      <div class="field" id="sharingBox" hidden>
+        <label for="sharingSel">Qué pueden hacer los otros perfiles con mis notas</label>
+        <select id="sharingSel">
+          <option value="private">Privado: no las ven (solo aparece mi nombre, bloqueado)</option>
+          <option value="read">Compartido, solo lectura (recomendado)</option>
+          <option value="edit">Compartido, otros pueden editarlas (nunca borrarlas)</option>
+        </select>
+        <p class="muted" id="sharingNote">Las notas de otros perfiles se consultan a la app: hace falta tenerla abierta. Tú siempre editas y borras solo las tuyas.</p>
+      </div>
       <div class="row">
         <button class="ghost" id="saveProfile">Guardar perfil</button>
         <button class="ghost danger" id="unpairBtn">Desconectar</button>
