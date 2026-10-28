@@ -33,5 +33,5 @@ Es opcional y gratis dentro del plan Spark para un uso personal. La app guarda u
 ## Límites conocidos
 - Probado con un doble en memoria y con el SDK simulado, no contra Firestore real.
 - Un perfil renombrado en otro equipo no cambia el nombre local (solo se añaden los perfiles que faltan).
-- Las cuentas (`id`, nombre, correo, `sharing`, `mergedInto`) se copian a Firestore. El enlace con un perfil de navegador es local de cada PC y no se sube: al mudarte, instala la app, importa de la nube y genera un código eligiendo la cuenta existente para cada extensión.
+- Las cuentas (`id`, nombre, correo, `sharing`, `mergedInto`, `deleted`) se copian a Firestore. Eliminar una cuenta la deja marcada `deleted:true` (no se borra el documento, para que no reviva); los demás equipos la eliminan al sincronizar y sus extensiones quedan sin cuenta. El enlace con un perfil de navegador es local de cada PC y no se sube: al mudarte, instala la app, importa de la nube y genera un código eligiendo la cuenta existente para cada extensión.
 - Fecha de modificación según el reloj de cada equipo: si un reloj está muy desfasado, puede ganar una edición más vieja.

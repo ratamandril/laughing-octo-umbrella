@@ -34,6 +34,7 @@ class Registry {
     this.profiles = new Map();
     this.bindings = new Map(); // profileId -> {browser, dir}: solo de esta PC
     this.byTokenHash = new Map();
+    this.affected = []; // extensiones cuya cuenta cambió por una importación: quien llama las avisa
     this.file = new JsonFile(path.join(dir, 'config.json'), () => this._snapshot(), { delayMs: 50, onError });
   }
 
@@ -222,9 +223,14 @@ class Registry {
     if (!known) {
       const stored = { id: profile.id, name: profile.name, email: profile.email || '', sharing: sharingOf(profile) };
       if (profile.mergedInto) stored.mergedInto = profile.mergedInto;
+      if (profile.deleted === true) stored.deleted = true;
       this.profiles.set(stored.id, stored);
       this.file.markDirty();
       return stored.mergedInto ? 'merged' : 'added';
+    }
+    if (profile.deleted === true && !known.deleted) {
+      this.affected.push(...(this.deleteProfile(known.id) || []));
+      return 'deleted';
     }
     if (profile.mergedInto && !known.mergedInto && this.profiles.has(profile.mergedInto)) {
       return this.mergeProfile(known.id, profile.mergedInto) ? 'merged' : false;
@@ -233,12 +239,37 @@ class Registry {
   }
 
   getProfile(id) {
-    return (id && this.profiles.get(id)) || null;
+    const p = id && this.profiles.get(id);
+    return p && !p.deleted ? p : null;
+  }
+
+  // Elimina una cuenta: queda marcada (no se borra, para que la sincronización no la reviva), sin enlace local y
+  // con sus extensiones sin cuenta. Las notas las trata quien llama. Devuelve los ids de extensiones que la tenían.
+  deleteProfile(id) {
+    const profile = this.getProfile(id);
+    if (!profile) return null;
+    const instanceIds = [];
+    for (const instance of this.instances.values()) {
+      if (instance.profileId === id) {
+        instance.profileId = null;
+        instanceIds.push(instance.id);
+      }
+    }
+    this.bindings.delete(id);
+    profile.deleted = true;
+    this.file.markDirty();
+    return instanceIds;
+  }
+
+  takeAffected() {
+    const ids = this.affected;
+    this.affected = [];
+    return ids;
   }
 
   // Cuentas en uso (las unidas a otra no cuentan)
   listProfiles() {
-    return [...this.profiles.values()].filter((p) => !p.mergedInto);
+    return [...this.profiles.values()].filter((p) => !p.mergedInto && !p.deleted);
   }
 
   // Todas, también las unidas: es lo que se sincroniza con Firestore

@@ -109,95 +109,244 @@ function renderInstances(instances, current) {
   }
 }
 
+// ---------- Cuentas ----------
+// Menú flotante de acciones (una sola instancia)
+let accMenu = null;
+function closeAccMenu() {
+  if (accMenu) { accMenu.remove(); accMenu = null; }
+}
+document.addEventListener('click', (e) => { if (accMenu && !accMenu.contains(e.target) && !e.target.closest('.acc-menu-btn')) closeAccMenu(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAccMenu(); });
+window.addEventListener('resize', closeAccMenu);
+
+function showAccMenu(button, items) {
+  closeAccMenu();
+  const menu = el('div', 'menu');
+  menu.setAttribute('role', 'menu');
+  for (const item of items) {
+    if (item.separator) { menu.append(el('div', 'menu-sep')); continue; }
+    const b = el('button', 'menu-item' + (item.danger ? ' danger' : ''), item.label);
+    b.type = 'button';
+    b.setAttribute('role', 'menuitem');
+    b.addEventListener('click', () => { closeAccMenu(); item.onclick(); });
+    menu.append(b);
+  }
+  document.body.append(menu);
+  const r = button.getBoundingClientRect();
+  const left = Math.max(4, Math.min(window.innerWidth - menu.offsetWidth - 4, r.right - menu.offsetWidth));
+  const below = window.innerHeight - r.bottom - 6;
+  const top = below >= menu.offsetHeight || r.top < menu.offsetHeight ? r.bottom + 2 : r.top - menu.offsetHeight - 2;
+  menu.style.left = left + 'px';
+  menu.style.top = Math.max(4, top) + 'px';
+  accMenu = menu;
+  menu.querySelector('button').focus();
+}
+
+// Ventana de diálogo: body es un nodo; onOk() devuelve un texto de error para quedarse abierta, o nada para cerrar
+function openDialog(title, body, { okText = 'Guardar', danger = false, onOk } = {}) {
+  const dlg = $('#accDlg');
+  $('#accDlgTitle').textContent = title;
+  $('#accDlgBody').replaceChildren(body);
+  const ok = $('#accDlgOk');
+  ok.textContent = okText;
+  ok.className = danger ? 'primary danger-fill' : 'primary';
+  $('#accDlgError').textContent = '';
+  ok.onclick = async () => {
+    ok.disabled = true;
+    try {
+      const error = await onOk();
+      if (error) { $('#accDlgError').textContent = error; return; }
+      dlg.close();
+    } finally {
+      ok.disabled = false;
+    }
+    accountsSig = '';
+    refresh();
+  };
+  $('#accDlgCancel').onclick = () => dlg.close();
+  dlg.showModal();
+}
+
+function field(label, input) {
+  const wrap = el('label', 'dlg-field');
+  wrap.append(el('span', '', label), input);
+  return wrap;
+}
+
+function detectedLabel(d, registered, selfId) {
+  const owner = d.boundTo && d.boundTo !== selfId ? registered.find((r) => r.id === d.boundTo) : null;
+  return `${BROWSER_NAMES[d.browser] || d.browser} · ${d.name}${d.email ? ' (' + d.email + ')' : ''}${owner ? ' · ahora de «' + owner.name + '»' : ''}`;
+}
+
+function editAccountDialog(profile) {
+  const body = el('div', 'dlg-stack');
+  const name = document.createElement('input');
+  name.value = profile.name; name.maxLength = 60;
+  const mail = document.createElement('input');
+  mail.type = 'email'; mail.value = profile.email || ''; mail.placeholder = 'opcional';
+  body.append(field('Nombre', name), field('Correo (solo una etiqueta para reconocerla)', mail));
+  openDialog('Editar cuenta', body, {
+    onOk: async () => {
+      const r = await window.notasApp.updateProfile(profile.id, { name: name.value.trim(), email: mail.value.trim() });
+      return r && r.error ? 'Revisa el nombre y el correo.' : '';
+    },
+  });
+}
+
+function bindAccountDialog(profile, detected, registered) {
+  const body = el('div', 'dlg-stack');
+  const bind = document.createElement('select');
+  bind.append(new Option('— sin enlace en esta PC —', ''));
+  for (const d of detected) bind.append(new Option(detectedLabel(d, registered, profile.id), `${d.browser}|${d.dir}`));
+  bind.value = profile.binding ? `${profile.binding.browser}|${profile.binding.dir}` : '';
+  body.append(field('Los links de esta cuenta se abren con este perfil de navegador de esta PC', bind));
+  body.append(el('p', 'muted', 'Solo vale en esta PC y no se sube a la nube. Si ese perfil ya estaba enlazado a otra cuenta, pasa a esta.'));
+  openDialog('Enlazar con un perfil de navegador', body, {
+    onOk: async () => {
+      const [browser, dir] = bind.value ? bind.value.split('|') : ['', ''];
+      const r = await window.notasApp.bindProfile(profile.id, browser, dir);
+      return r && r.error ? 'Ese perfil de navegador ya no se detecta.' : '';
+    },
+  });
+}
+
+function shareAccountDialog(profile) {
+  const body = el('div', 'dlg-stack');
+  const share = document.createElement('select');
+  for (const [value, text] of SHARING_TEXT) share.append(new Option(text, value));
+  share.value = profile.sharing || 'read';
+  body.append(field('Qué pueden hacer las otras cuentas con las notas de «' + profile.name + '»', share));
+  openDialog('Compartir notas', body, { onOk: async () => { await window.notasApp.setSharing(profile.id, share.value); return ''; } });
+}
+
+function mergeAccountDialog(profile, registered) {
+  const body = el('div', 'dlg-stack');
+  const pick = document.createElement('select');
+  for (const other of registered.filter((o) => o.id !== profile.id)) pick.append(new Option(accountLabel(other), other.id));
+  body.append(field('Unir «' + profile.name + '» con', pick));
+  body.append(el('p', 'muted', 'Todas sus notas y extensiones pasan a la cuenta elegida y «' + profile.name + '» deja de existir (también en los demás equipos al sincronizar).'));
+  openDialog('Unir con otra cuenta', body, {
+    okText: 'Unir',
+    onOk: async () => { await window.notasApp.mergeProfiles(profile.id, pick.value); return ''; },
+  });
+}
+
+async function deleteAccountDialog(profile, registered) {
+  const impact = await window.notasApp.profileImpact(profile.id);
+  if (!impact) { flash('Esa cuenta ya no existe.', true); accountsSig = ''; refresh(); return; }
+  const others = registered.filter((o) => o.id !== profile.id);
+  const body = el('div', 'dlg-stack');
+  body.append(el('p', '', `Vas a eliminar «${profile.name}». Esto es lo que se ve afectado; decide qué hacer en cada punto:`));
+
+  const mk = (name, value, text, checked) => {
+    const label = el('label', 'dlg-radio');
+    const input = document.createElement('input');
+    input.type = 'radio'; input.name = name; input.value = value; input.checked = !!checked;
+    label.append(input, el('span', '', text));
+    return { label, input };
+  };
+  const target = document.createElement('select');
+  for (const o of others) target.append(new Option(accountLabel(o), o.id));
+  target.disabled = true;
+
+  // Notas
+  const nCount = impact.notes + (impact.trashed ? ` (y ${impact.trashed} en la papelera)` : '');
+  const notesBox = el('fieldset', 'dlg-group');
+  notesBox.append(el('legend', '', `Notas: ${nCount}`));
+  const nTrash = mk('dn', 'trash', 'Mandarlas a la papelera (se pueden restaurar 30 días)', true);
+  notesBox.append(nTrash.label);
+  let nMove = null;
+  if (others.length) {
+    nMove = mk('dn', 'move', 'Pasarlas a otra cuenta:');
+    notesBox.append(nMove.label);
+  }
+  if (impact.notes || impact.trashed) body.append(notesBox);
+
+  // Extensiones
+  const iBox = el('fieldset', 'dlg-group');
+  let iUn = null; let iRev = null; let iMove = null;
+  if (impact.instances.length) {
+    iBox.append(el('legend', '', `Extensiones emparejadas: ${impact.instances.map((i) => i.label || i.browser).join(', ')}`));
+    iUn = mk('di', 'unassign', 'Dejarlas sin cuenta (no reciben notas hasta que les asignes una)', true);
+    iRev = mk('di', 'revoke', 'Desconectarlas de la app (habrá que emparejarlas de nuevo)');
+    iBox.append(iUn.label, iRev.label);
+    if (others.length) { iMove = mk('di', 'move', 'Pasarlas a otra cuenta:'); iBox.append(iMove.label); }
+    body.append(iBox);
+  }
+  if (nMove || iMove) body.append(field('Cuenta de destino', target));
+  const syncTarget = () => { target.disabled = !((nMove && nMove.input.checked) || (iMove && iMove.input.checked)); };
+  for (const r of [nTrash, nMove, iUn, iRev, iMove]) if (r) r.input.addEventListener('change', syncTarget);
+
+  const extra = [];
+  if (impact.binding) extra.push('El enlace con el perfil de navegador de esta PC se quita.');
+  extra.push('La cuenta se elimina también en los demás equipos al sincronizar con la nube.');
+  body.append(el('p', 'muted', extra.join(' ')));
+
+  openDialog('Eliminar cuenta', body, {
+    okText: 'Eliminar cuenta',
+    danger: true,
+    onOk: async () => {
+      const notes = nMove && nMove.input.checked ? 'move' : 'trash';
+      const instances = iMove && iMove.input.checked ? 'move' : iRev && iRev.input.checked ? 'revoke' : 'unassign';
+      const r = await window.notasApp.deleteProfile(profile.id, { notes, instances, moveTo: target.disabled ? null : target.value });
+      if (r && r.error) return r.error === 'invalid_target' ? 'Elige la cuenta de destino.' : 'No se pudo eliminar la cuenta.';
+      flash(`Cuenta «${profile.name}» eliminada.`);
+      return '';
+    },
+  });
+}
+
 let accountsSig = '';
+let accountsFilter = 'all';
+$('#accFilter').addEventListener('change', () => { accountsFilter = $('#accFilter').value; accountsSig = ''; refresh(); });
 function renderProfiles(detected, registered) {
-  // Solo se redibuja si cambió algo: así no se borra lo que se esté escribiendo
-  const sig = JSON.stringify([detected, registered]);
+  // Solo se redibuja si cambió algo
+  const sig = JSON.stringify([detected, registered, accountsFilter]);
   if (sig === accountsSig) return;
   accountsSig = sig;
   const list = $('#profiles');
   list.replaceChildren();
   $('#noProfiles').hidden = registered.length > 0;
-  for (const profile of registered) {
-    const row = el('div', 'row');
+  $('#accFilter').hidden = registered.length < 2;
+  const linkedCount = registered.filter((p) => p.binding).length;
+  $('#accSummary').textContent = registered.length ? `${linkedCount} enlazada${linkedCount === 1 ? '' : 's'} · ${registered.length - linkedCount} sin enlazar` : '';
+  const shown = registered.filter((p) => accountsFilter === 'all' || (accountsFilter === 'linked' ? p.binding : !p.binding));
+  if (registered.length && !shown.length) list.append(el('p', 'muted', 'Ninguna cuenta coincide con el filtro.'));
+
+  for (const profile of shown) {
+    const row = el('div', 'row acct');
     const info = el('div', 'grow');
-    info.append(el('div', 'strong', profile.name));
+    const head = el('div', 'acct-head');
+    head.append(el('span', 'strong', profile.name));
+    const linked = !!profile.binding;
+    const det = linked ? detected.find((d) => d.browser === profile.binding.browser && d.dir === profile.binding.dir) : null;
+    const badge = linked
+      ? el('span', det ? 'tag ok' : 'tag warn', det ? `Enlazada · ${BROWSER_NAMES[det.browser] || det.browser} · ${det.name}` : 'Enlazada a un perfil que ya no existe')
+      : el('span', 'tag warn', 'Sin enlazar');
+    badge.title = linked ? 'Sus links se abren con ese perfil de navegador en esta PC' : 'No se puede «Abrir en su perfil» hasta enlazarla con un perfil de navegador de esta PC';
+    head.append(badge);
+    if (profile.sharing && profile.sharing !== 'read') head.append(el('span', 'tag', profile.sharing === 'private' ? 'Privada' : 'Editable por otros'));
+    info.append(head);
     info.append(el('div', 'muted', [profile.email || 'sin correo', `${profile.notes} ${profile.notes === 1 ? 'nota' : 'notas'}`, `${profile.instances} ${profile.instances === 1 ? 'extensión' : 'extensiones'}`].join(' · ')));
     row.append(info);
+
+    const more = el('button', 'ghost small acc-menu-btn', 'Acciones ▾');
+    more.type = 'button';
+    more.setAttribute('aria-haspopup', 'menu');
+    more.addEventListener('click', () => {
+      if (accMenu) return closeAccMenu();
+      const items = [
+        { label: 'Editar nombre y correo…', onclick: () => editAccountDialog(profile) },
+        { label: linked ? 'Cambiar el perfil enlazado…' : 'Enlazar con un perfil de navegador…', onclick: () => bindAccountDialog(profile, detected, registered) },
+      ];
+      if (linked) items.push({ label: 'Quitar el enlace', onclick: async () => { await window.notasApp.bindProfile(profile.id, '', ''); accountsSig = ''; refresh(); } });
+      items.push({ label: 'Compartir notas…', onclick: () => shareAccountDialog(profile) });
+      if (registered.length > 1) items.push({ label: 'Unir con otra cuenta…', onclick: () => mergeAccountDialog(profile, registered) });
+      items.push({ separator: true }, { label: 'Eliminar cuenta…', danger: true, onclick: () => deleteAccountDialog(profile, registered) });
+      showAccMenu(more, items);
+    });
+    row.append(more);
     list.append(row);
-
-    // Nombre y correo
-    const edit = el('div', 'access');
-    const name = document.createElement('input');
-    name.value = profile.name;
-    name.maxLength = 60;
-    name.placeholder = 'Nombre';
-    name.className = 'mini-input';
-    const mail = document.createElement('input');
-    mail.type = 'email';
-    mail.value = profile.email || '';
-    mail.placeholder = 'Correo (opcional)';
-    mail.className = 'mini-input';
-    const save = el('button', 'ghost', 'Guardar');
-    save.addEventListener('click', async () => {
-      const r = await window.notasApp.updateProfile(profile.id, { name: name.value.trim(), email: mail.value.trim() });
-      if (r && r.error) flash('Revisa el nombre y el correo.', true);
-      accountsSig = '';
-      refresh();
-    });
-    edit.append(name, mail, save);
-    list.append(edit);
-
-    // Con qué perfil de navegador de esta PC se abren sus links
-    const open = el('div', 'access');
-    open.append(el('span', '', 'Se abre con:'));
-    const bind = document.createElement('select');
-    bind.append(new Option('— sin enlace en esta PC —', ''));
-    for (const d of detected) {
-      const owner = d.boundTo && d.boundTo !== profile.id ? registered.find((r) => r.id === d.boundTo) : null;
-      bind.append(new Option(`${BROWSER_NAMES[d.browser] || d.browser} · ${d.name}${d.email ? ' (' + d.email + ')' : ''}${owner ? ' · ahora de «' + owner.name + '»' : ''}`, `${d.browser}|${d.dir}`));
-    }
-    bind.value = profile.binding ? `${profile.binding.browser}|${profile.binding.dir}` : '';
-    bind.addEventListener('change', async () => {
-      const [browser, dir] = bind.value ? bind.value.split('|') : ['', ''];
-      const taken = dir ? detected.find((d) => d.browser === browser && d.dir === dir && d.boundTo && d.boundTo !== profile.id) : null;
-      if (taken && !window.confirm('Ese perfil de navegador ya está enlazado a otra cuenta. ¿Pasarlo a esta?')) { accountsSig = ''; refresh(); return; }
-      await window.notasApp.bindProfile(profile.id, browser, dir);
-      accountsSig = '';
-      refresh();
-    });
-    open.append(bind);
-
-    // Cómo comparte sus notas con las demás cuentas
-    open.append(el('span', '', 'Notas:'));
-    const share = document.createElement('select');
-    for (const [value, text] of SHARING_TEXT) share.append(new Option(text, value));
-    share.value = profile.sharing || 'read';
-    share.addEventListener('change', async () => {
-      await window.notasApp.setSharing(profile.id, share.value);
-      refresh();
-    });
-    open.append(share);
-    list.append(open);
-
-    // Unir con otra cuenta (p. ej. dos cuentas que en realidad son la misma)
-    if (registered.length > 1) {
-      const join = el('div', 'access');
-      const move = document.createElement('select');
-      move.append(new Option('Unir con otra cuenta…', ''));
-      for (const other of registered.filter((o) => o.id !== profile.id)) move.append(new Option(accountLabel(other), other.id));
-      move.addEventListener('change', async () => {
-        if (!move.value) return;
-        const target = registered.find((o) => o.id === move.value);
-        if (window.confirm(`¿Unir «${profile.name}» con «${target.name}»? Todas sus notas y extensiones pasarán a «${target.name}» y «${profile.name}» dejará de existir.`)) {
-          await window.notasApp.mergeProfiles(profile.id, move.value);
-        }
-        accountsSig = '';
-        refresh();
-      });
-      join.append(move);
-      list.append(join);
-    }
   }
 }
 

@@ -243,7 +243,7 @@ function notice(text, isError = false) {
   box.textContent = text;
   box.classList.toggle('error', isError);
   clearTimeout(noticeTimer);
-  noticeTimer = setTimeout(() => { box.hidden = true; }, 3000);
+  noticeTimer = setTimeout(() => { box.hidden = true; }, isError ? 7000 : 3000);
 }
 
 function setNoteView(note, mode) {

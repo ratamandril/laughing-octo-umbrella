@@ -26,7 +26,7 @@ La app escucha en `http://127.0.0.1:47321` (puerto configurable con `NOTAS_PORT`
 | `PATCH /profiles/:id {name}` | renombra la cuenta propia |
 | `PUT /me/email {email}` | correo de la cuenta, solo una etiqueta (vacío lo quita; `400 invalid_email`) |
 | `PUT /me/sharing {sharing}` | el dueño del perfil elige `private`, `read` (por defecto) o `edit` |
-| `GET /others?url=` | resumen de los demás perfiles: `{profiles:[{id, name, email, sharing, total, forUrl}]}`; los privados solo traen `id, browser, name, sharing` |
+| `GET /others?url=` | resumen de los demás perfiles: `{profiles:[{id, name, email, sharing, total, forUrl}]}`; los privados solo traen `id, name, sharing`; el resto trae `linked` (si la cuenta tiene enlace local en esta PC, necesario para `/open`) |
 | `GET /profiles/:id/notes?url=&q=&tag=&offset=&limit=` | notas de otro perfil, paginadas (20 por defecto, máx. 50) |
 | `GET /search?q=&tag=&limit=` | búsqueda en todos los perfiles legibles, agrupada por perfil |
 | `GET /notes?since=<seq>` | notas **propias** con `seq` mayor; con `since>0` incluye las borradas **sin contenido** (`deleted:true`) |

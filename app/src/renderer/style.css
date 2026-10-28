@@ -77,3 +77,24 @@ button.danger-ghost { color: var(--danger); }
 .pair-form { display: flex; flex-wrap: wrap; gap: .5rem .8rem; align-items: center; margin: .6rem 0 .2rem; }
 .pair-form select, .pair-form input { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: .5rem; padding: .3rem .5rem; }
 .pair-new { display: inline-flex; flex-wrap: wrap; gap: .5rem; }
+
+.tag.warn { color: #9a6700; border-color: #9a6700; }
+@media (prefers-color-scheme: dark) { .tag.warn { color: #e3b341; border-color: #e3b341; } }
+.acct-head { display: flex; flex-wrap: wrap; gap: .3rem .5rem; align-items: center; }
+#accFilter { font: inherit; color: inherit; background: var(--card); border: 1px solid var(--line); border-radius: .5rem; padding: .2rem .4rem; }
+.menu { position: fixed; z-index: 50; min-width: 13rem; background: var(--card); border: 1px solid var(--line); border-radius: .6rem; box-shadow: 0 8px 24px rgba(0,0,0,.18); padding: .25rem; }
+.menu-item { display: block; width: 100%; text-align: left; background: none; border: 0; border-radius: .4rem; padding: .4rem .6rem; }
+.menu-item:hover, .menu-item:focus-visible { background: var(--line); outline: none; }
+.menu-item.danger { color: var(--danger); }
+.menu-sep { height: 1px; background: var(--line); margin: .25rem 0; }
+dialog { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 1rem; padding: 1.1rem 1.2rem; width: min(34rem, calc(100vw - 2rem)); }
+dialog::backdrop { background: rgba(0,0,0,.4); }
+.dlg-stack { display: flex; flex-direction: column; gap: .7rem; margin: .6rem 0; }
+.dlg-field { display: flex; flex-direction: column; gap: .25rem; font-size: .9rem; }
+.dlg-field input, .dlg-field select { font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: .5rem; padding: .35rem .5rem; }
+.dlg-group { border: 1px solid var(--line); border-radius: .6rem; padding: .5rem .7rem; display: flex; flex-direction: column; gap: .3rem; margin: 0; }
+.dlg-group legend { font-weight: 600; padding: 0 .3rem; font-size: .9rem; }
+.dlg-radio { display: flex; gap: .5rem; align-items: flex-start; }
+.dlg-actions { display: flex; justify-content: flex-end; gap: .5rem; margin-top: .6rem; }
+button.danger-fill { background: var(--danger); color: #fff; }
+button.danger-fill:hover { background: var(--danger); filter: brightness(.9); }

@@ -167,6 +167,11 @@ function registerIpc() {
   ipcMain.handle('profiles:update', (_event, profileId, patch) => core.updateProfile(str(profileId), { name: patch && typeof patch.name === 'string' ? patch.name : undefined, email: patch && typeof patch.email === 'string' ? patch.email : undefined }));
   ipcMain.handle('profiles:bind', (_event, profileId, browser, dir) => core.setBinding(str(profileId), str(browser), str(dir)));
   ipcMain.handle('instances:assign', (_event, instanceId, profileId) => core.assignInstance(str(instanceId), str(profileId)));
+  ipcMain.handle('profiles:impact', (_event, id) => core.profileImpact(str(id)));
+  ipcMain.handle('profiles:delete', (_event, id, options) => {
+    const o = options && typeof options === 'object' ? options : {};
+    return core.deleteProfile(str(id), { notes: str(o.notes), instances: str(o.instances), moveTo: o.moveTo ? str(o.moveTo) : null });
+  });
   ipcMain.handle('profiles:merge', (_event, fromId, intoId) => core.mergeProfiles(str(fromId), str(intoId)));
   ipcMain.handle('profiles:sharing', (_event, profileId, mode) => core.setSharing(str(profileId), str(mode)));
   ipcMain.handle('sync:now', () => core.syncNow());

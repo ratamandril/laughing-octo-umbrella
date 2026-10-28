@@ -14,7 +14,7 @@ const { JsonFile } = require('../jsonfile');
 const PROFILE_ID_RE = /^p_[0-9a-f]{12}$/;
 const PUSH_CHUNK = 400;
 
-const hashProfile = (p) => crypto.createHash('sha1').update(JSON.stringify([p.id, p.name, p.email || '', p.sharing, p.mergedInto || ''])).digest('hex');
+const hashProfile = (p) => crypto.createHash('sha1').update(JSON.stringify([p.id, p.name, p.email || '', p.sharing, p.mergedInto || '', p.deleted === true])).digest('hex');
 const validProfile = (p) =>
   p && PROFILE_ID_RE.test(p.id) && typeof p.name === 'string' && p.name.length > 0 && p.name.length <= 60;
 
@@ -211,7 +211,7 @@ class SyncEngine extends EventEmitter {
 
   // Aplica lo remoto que sea más reciente. Devuelve lo que cambió para avisar a las extensiones.
   _merge({ notes = [], profiles = [], palette = null }, { initial }) {
-    const applied = { notes: [], palette: null, profiles: false };
+    const applied = { notes: [], palette: null, profiles: false, access: [] };
 
     const merges = [];
     for (const raw of profiles) {
@@ -226,6 +226,7 @@ class SyncEngine extends EventEmitter {
       const moved = this.store.reassignProfile(id, this.registry.resolveProfileId(id));
       applied.notes.push(...moved);
     }
+    applied.access = this.registry.takeAffected();
     if (applied.profiles) {
       this.file.markDirty();
       this.registry.file.markDirty();

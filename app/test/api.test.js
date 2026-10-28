@@ -625,6 +625,62 @@ describe('perfiles: cada uno escribe lo suyo y los demás consultan', () => {
     }
   });
 
+  test('eliminar una cuenta: notas a la papelera, extensiones sin cuenta y enlace quitado', async () => {
+    const { ctx, a, b, call } = await setup();
+    try {
+      await call(a, { method: 'PUT', path: '/notes/na', body: note('na') });
+      await call(b, { method: 'PUT', path: '/notes/nb', body: note('nb') });
+      const impact = ctx.core.profileImpact(a.profileId);
+      assert.equal(impact.notes, 1);
+      assert.equal(impact.instances.length, 1);
+      assert.ok(impact.binding);
+      assert.deepEqual(ctx.core.deleteProfile(a.profileId, { notes: 'nope' }), { error: 'invalid_option' });
+      assert.deepEqual(ctx.core.deleteProfile(a.profileId, { notes: 'move' }), { error: 'invalid_target' });
+      assert.equal(ctx.core.deleteProfile(a.profileId, { notes: 'trash', instances: 'unassign' }).ok, true);
+      assert.ok(ctx.core.store.get('na').deleted, 'la nota va a la papelera');
+      assert.ok(!ctx.core.store.get('nb').deleted);
+      assert.equal(ctx.core.registry.getProfile(a.profileId), null);
+      assert.ok(!ctx.core.registry.listProfiles().some((p) => p.id === a.profileId));
+      assert.equal(ctx.core.registry.bindingOf(a.profileId), null);
+      assert.equal((await call(a, { path: '/notes' })).status, 409, 'la extensión queda sin cuenta');
+      assert.ok(!(await call(b, { path: '/others' })).json.profiles.some((p) => p.id === a.profileId));
+      assert.equal(ctx.core.deleteProfile(a.profileId, {}).error, 'not_found');
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('eliminar una cuenta pasando notas y extensiones a otra, o desconectando las extensiones', async () => {
+    const { ctx, a, b, call } = await setup();
+    try {
+      await call(a, { method: 'PUT', path: '/notes/na', body: note('na') });
+      assert.equal(ctx.core.deleteProfile(a.profileId, { notes: 'move', instances: 'move', moveTo: b.profileId }).ok, true);
+      assert.equal(ctx.core.store.get('na').profileId, b.profileId);
+      assert.ok(!ctx.core.store.get('na').deleted);
+      assert.equal((await call(a, { path: '/me' })).json.profile.id, b.profileId);
+      const c = await pair(ctx, { origin: ORIGIN_B, profile: null });
+      ctx.core.assignInstance(c.instanceId, b.profileId);
+      assert.equal(ctx.core.deleteProfile(b.profileId, { notes: 'trash', instances: 'revoke' }).ok, true);
+      assert.equal((await call(c, { path: '/me' })).status, 401, 'revocada');
+      assert.equal(ctx.core.registry.listInstances().filter((i) => i.profileId === b.profileId).length, 0);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('las demás extensiones saben si una cuenta está enlazada en esta PC', async () => {
+    const { ctx, a, b, call } = await setup();
+    try {
+      await call(a, { method: 'PUT', path: '/notes/na', body: note('na') });
+      assert.equal((await call(b, { path: '/others' })).json.profiles.find((p) => p.id === a.profileId).linked, true);
+      ctx.core.registry.clearBinding(a.profileId);
+      assert.equal((await call(b, { path: '/others' })).json.profiles.find((p) => p.id === a.profileId).linked, false);
+      assert.equal((await call(b, { method: 'POST', path: '/open', body: { noteId: 'na' } })).json.error, 'no_binding');
+    } finally {
+      await ctx.close();
+    }
+  });
+
   test('el código de emparejamiento lleva la cuenta: existente o nueva', async () => {
     const ctx = await startCore();
     try {

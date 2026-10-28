@@ -76,7 +76,8 @@ function createCore(options = {}) {
       notify();
     });
     server.setCloud(engine.getStatus());
-    engine.on('applied', ({ notes, palette, profiles }) => {
+    engine.on('applied', ({ notes, palette, profiles, access = [] }) => {
+      for (const id of access) server.notifyAccess(id);
       server.broadcastNotes(notes);
       if (palette) server.broadcastPalette(palette);
       if (profiles) server.broadcastProfiles();
@@ -192,6 +193,8 @@ function createCore(options = {}) {
       if (into) changed();
       return !!into;
     },
+    profileImpact: (id) => server.profileImpact(String(id)),
+    deleteProfile: (id, options) => server.deleteProfile(String(id), options || {}),
     // Abre la nota en su navegador y perfil (desde la propia app)
     openNote: (id) => server.openTarget({ noteId: String(id) }),
 

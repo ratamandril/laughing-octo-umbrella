@@ -50,7 +50,11 @@
 
   <section class="card">
     <h2>Cuentas</h2>
-    <p class="muted">Las notas pertenecen a una cuenta y viajan con ella a cualquier PC. «Se abre con» dice qué perfil de navegador de este equipo abre los links de esa cuenta (solo vale en esta PC).</p>
+    <p class="muted">Las notas pertenecen a una cuenta y viajan con ella a cualquier PC. Una cuenta «enlazada» tiene un perfil de navegador de este equipo que abre sus links («Abrir en su perfil»); las «sin enlazar» no. El enlace vale solo en esta PC. Todo lo demás está en «Acciones».</p>
+    <div class="foot"><span id="accSummary" class="muted"></span>
+      <select id="accFilter" aria-label="Filtrar cuentas" hidden>
+        <option value="all">Todas</option><option value="linked">Enlazadas</option><option value="unlinked">Sin enlazar</option>
+      </select></div>
     <div id="profiles" class="list"></div>
     <p id="noProfiles" class="muted" hidden>Todavía no hay cuentas: se crean al emparejar una extensión.</p>
   </section>
@@ -96,5 +100,11 @@
   </footer>
 
   <script src="renderer.js"></script>
+  <dialog id="accDlg">
+    <h2 id="accDlgTitle"></h2>
+    <div id="accDlgBody"></div>
+    <p id="accDlgError" class="err" role="alert"></p>
+    <div class="dlg-actions"><button class="ghost" id="accDlgCancel" type="button">Cancelar</button><button class="primary" id="accDlgOk" type="button">Guardar</button></div>
+  </dialog>
 </body>
 </html>

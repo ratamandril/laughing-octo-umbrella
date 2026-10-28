@@ -193,6 +193,29 @@ describe('sync con Firestore (doble en memoria)', () => {
     await engine.stop();
   });
 
+  test('una cuenta eliminada en otro equipo se elimina aquí y sus extensiones quedan sin cuenta; no se revive', async () => {
+    const remote = new FakeRemote();
+    const { registry, engine } = mkEngine(tmpDir(), remote);
+    await engine.start();
+    const acc = registry.createProfile({ name: 'Vieja' });
+    registry.setBinding(acc.id, 'chrome', 'Default');
+    registry.addInstance({ id: 'i_x', tokenHash: 'h'.repeat(10), origin: 'o', browser: 'chrome', label: '', profileId: acc.id, pairedAt: 1 });
+    const applied = [];
+    engine.on('applied', (a) => applied.push(a));
+    remote.listener.onBatch({ profiles: [{ id: acc.id, name: 'Vieja', email: '', sharing: 'read', deleted: true }] });
+    assert.equal(registry.getProfile(acc.id), null);
+    assert.equal(registry.getInstance('i_x').profileId, null);
+    assert.equal(registry.bindingOf(acc.id), null);
+    assert.deepEqual(applied.at(-1).access, ['i_x'], 'se avisa a la extensión afectada');
+    // una versión no eliminada que llegue después no la revive
+    remote.listener.onBatch({ profiles: [{ id: acc.id, name: 'Vieja', email: '', sharing: 'read' }] });
+    assert.equal(registry.getProfile(acc.id), null);
+    // una cuenta eliminada que aquí no se conocía llega ya eliminada
+    remote.listener.onBatch({ profiles: [{ id: 'p_zzzzzzzzzzzz', name: 'Otra', email: '', sharing: 'read', deleted: true }] });
+    assert.ok(!registry.listProfiles().some((p) => p.id === 'p_zzzzzzzzzzzz'));
+    await engine.stop();
+  });
+
   test('sin conexión acumula, reintenta y sube todo al volver', async () => {
     const remote = new FakeRemote();
     remote.down = true;

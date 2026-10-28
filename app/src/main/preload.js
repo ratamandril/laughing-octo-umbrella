@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld('notasApp', {
   updateProfile: (profileId, patch) => ipcRenderer.invoke('profiles:update', profileId, patch),
   bindProfile: (profileId, browser, dir) => ipcRenderer.invoke('profiles:bind', profileId, browser, dir),
   assignInstance: (instanceId, profileId) => ipcRenderer.invoke('instances:assign', instanceId, profileId),
+  profileImpact: (id) => ipcRenderer.invoke('profiles:impact', id),
+  deleteProfile: (id, options) => ipcRenderer.invoke('profiles:delete', id, options),
   mergeProfiles: (fromId, intoId) => ipcRenderer.invoke('profiles:merge', fromId, intoId),
   setSharing: (profileId, mode) => ipcRenderer.invoke('profiles:sharing', profileId, mode),
   chooseSyncKey: () => ipcRenderer.invoke('sync:choose-key'),

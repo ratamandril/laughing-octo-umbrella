@@ -235,8 +235,9 @@ class NotesServer extends EventEmitter {
   _profileView(instance, p) {
     const sharing = sharingOf(p);
     if (instance && p.id === instance.profileId) return { id: p.id, name: p.name, email: p.email || '', sharing, own: true, binding: this.registry.bindingOf(p.id) };
+    const linked = !!this.registry.bindingOf(p.id); // ¿se puede abrir con "Abrir en su perfil" en esta PC?
     if (sharing === 'private') return { id: p.id, name: p.name, sharing, own: false };
-    return { id: p.id, name: p.name, email: p.email || '', sharing, own: false };
+    return { id: p.id, name: p.name, email: p.email || '', sharing, own: false, linked };
   }
 
   _profileList(instance) {
@@ -494,6 +495,55 @@ class NotesServer extends EventEmitter {
     this._queueOthers([fromId, intoId]);
     this.emit('change');
     return into;
+  }
+
+  // Qué pasaría al eliminar una cuenta (para que la app lo muestre antes de decidir)
+  profileImpact(id) {
+    const profile = this.registry.getProfile(id);
+    if (!profile) return null;
+    let notes = 0;
+    let trashed = 0;
+    for (const n of this.store.notes.values()) {
+      if (n.profileId !== id) continue;
+      if (n.deleted) trashed++; else notes++;
+    }
+    const instances = this.registry.listInstances().filter((i) => i.profileId === id).map((i) => ({ id: i.id, label: i.label, browser: i.browser }));
+    return { id, name: profile.name, notes, trashed, instances, binding: this.registry.bindingOf(id) };
+  }
+
+  // Elimina una cuenta según lo decidido: notes 'trash' (a la papelera) o 'move' (pasan a `moveTo`);
+  // instances 'unassign' (quedan sin cuenta), 'revoke' (se desconectan) o 'move' (pasan a `moveTo`).
+  deleteProfile(id, { notes = 'trash', instances = 'unassign', moveTo = null } = {}) {
+    const profile = this.registry.getProfile(id);
+    if (!profile) return { error: 'not_found' };
+    notes = notes || 'trash';
+    instances = instances || 'unassign';
+    if (!['trash', 'move'].includes(notes) || !['unassign', 'revoke', 'move'].includes(instances)) return { error: 'invalid_option' };
+    const target = moveTo ? this.registry.getProfile(this.registry.resolveProfileId(moveTo)) : null;
+    if ((notes === 'move' || instances === 'move') && (!target || target.id === id)) return { error: 'invalid_target' };
+
+    const instanceIds = this.registry.listInstances().filter((i) => i.profileId === id).map((i) => i.id);
+    let changedNotes = [];
+    if (notes === 'move') changedNotes = this.store.reassignProfile(id, target.id);
+    else {
+      for (const n of [...this.store.notes.values()]) {
+        if (n.profileId === id && !n.deleted) changedNotes.push(this.store.remove(n.id));
+      }
+    }
+    this.registry.deleteProfile(id);
+    for (const iid of instanceIds) {
+      if (instances === 'revoke') this.auth.revoke(iid);
+      else {
+        if (instances === 'move') this.registry.setInstanceProfile(iid, target.id);
+        this.notifyAccess(iid);
+      }
+    }
+    this.registry.flush().catch(() => {});
+    this.broadcastProfiles();
+    if (changedNotes.length) this.broadcastNotes(changedNotes);
+    this._queueOthers([id, target && target.id]);
+    this.emit('change');
+    return { ok: true, notes: changedNotes.length, instances: instanceIds.length };
   }
 
   // El dueño del perfil decide cómo lo comparte (desde Ajustes de su extensión o, como respaldo, desde la app)

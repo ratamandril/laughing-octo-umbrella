@@ -162,7 +162,11 @@ function noteCard(note, { mode = 'normal', palette = [], onEdit, onDelete, onTag
     const items = [
       { label: 'Abrir página', onclick: () => chrome.tabs.create({ url: note.url }) },
     ];
-    if (foreign) items.push({ label: 'Abrir en su perfil (' + profileLabel(profile) + ')', onclick: () => onOpen(note) });
+    if (foreign) {
+      // Sin enlace local la app no sabe con qué perfil de navegador abrirla: se avisa en vez de fallar al pulsar
+      if (profile.linked === false) items.push({ label: 'Abrir en su perfil: cuenta sin enlazar en esta PC', onclick: () => onOpen(note) });
+      else items.push({ label: 'Abrir en su perfil (' + profileLabel(profile) + ')', onclick: () => onOpen(note) });
+    }
     items.push({ label: 'Copiar URL', onclick: async () => { const ok = await copyText(note.url); if (onNotice) onNotice(ok ? 'URL copiada.' : 'No se pudo copiar.', !ok); } });
     if (onEdit) {
       items.push({ separator: true });

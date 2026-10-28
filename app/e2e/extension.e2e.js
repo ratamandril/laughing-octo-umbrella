@@ -158,6 +158,32 @@ const profiles = {
   await pb.keyboard.press('Escape');
   assert.equal(await pb.locator('.menu').count(), 0, 'Esc cierra el menú');
 
+  // "Abrir página" abre de verdad una pestaña nueva con la URL de la nota
+  await pb.locator('article:has-text("Nota de B") .menu-btn').click();
+  const [opened] = await Promise.all([pb.context().waitForEvent('page', { timeout: 8000 }), pb.click('.menu >> text=Abrir página')]);
+  await sleep(1500);
+  console.log('   pestaña abierta:', opened.url());
+  assert.ok(/example\.com|chrome-error/.test(opened.url()), 'se abrió una pestaña con la URL de la nota: ' + opened.url());
+  await opened.close();
+  // Una cuenta sin enlace local lo dice en el menú y al pulsar explica qué falta (no falla en silencio)
+  await core.setBinding(profA.id, '', '');
+  await until(async () => {
+    await cardA.locator('.menu-btn').click();
+    const text = await pb.locator('.menu').textContent();
+    await pb.keyboard.press('Escape');
+    return /sin enlazar en esta PC/.test(text);
+  }, 'el menú avisa de que la cuenta no está enlazada');
+  await cardA.locator('.menu-btn').click();
+  await pb.click('.menu >> text=sin enlazar en esta PC');
+  await pb.waitForFunction(() => /no tiene un perfil de navegador enlazado/.test(document.body.textContent), null, { timeout: 8000 });
+  await core.setBinding(profA.id, 'chrome', 'Default');
+  await until(async () => {
+    await cardA.locator('.menu-btn').click();
+    const text = await pb.locator('.menu').textContent();
+    await pb.keyboard.press('Escape');
+    return /Abrir en su perfil \(/.test(text);
+  }, 'al enlazar vuelve a ofrecer abrir en su perfil');
+
   console.log('7. "Todas mis notas": búsqueda propia y global, grupos y vistas');
   await pb.fill('#search', 'vieja');
   assert.equal(await pb.locator('#list article').count(), 0, 'la búsqueda normal solo mira mis notas');
