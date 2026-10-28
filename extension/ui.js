@@ -63,14 +63,16 @@ document.addEventListener('click', (e) => {
 document.addEventListener('keydown', (e) => {
   if (openMenu && e.key === 'Escape') { e.stopPropagation(); closeMenu({ focusButton: true }); }
 }, true);
+// Chrome dispara scroll/resize justo al abrir (al enfocar el menú o al ajustar el tamaño del popup): se ignoran un instante
+const justOpened = () => openMenu && Date.now() - openMenu.at < 500;
 window.addEventListener('scroll', (e) => {
-  if (!openMenu) return;
+  if (!openMenu || justOpened()) return;
   if (e.target instanceof Node && openMenu.menu.contains(e.target)) return; // el scroll del propio menú no lo cierra
   // Solo se cierra si el botón se desplazó de verdad (así el menú no queda flotando lejos de él)
   const r = openMenu.button.getBoundingClientRect();
   if (Math.abs(r.top - openMenu.top) > 1 || Math.abs(r.left - openMenu.left) > 1) closeMenu();
 }, true);
-window.addEventListener('resize', () => closeMenu());
+window.addEventListener('resize', () => { if (!justOpened()) closeMenu(); });
 
 async function copyText(text) {
   try {
@@ -112,10 +114,10 @@ function showMenu(button, items) {
   menu.style.left = left + 'px';
   menu.style.top = Math.max(4, Math.min(window.innerHeight - mh - 4, top)) + 'px';
 
-  openMenu = { menu, button, top: r.top, left: r.left };
+  openMenu = { menu, button, top: r.top, left: r.left, at: Date.now() };
   button.setAttribute('aria-expanded', 'true');
   const buttons = [...menu.querySelectorAll('button')];
-  buttons[0].focus();
+  buttons[0].focus({ preventScroll: true });
   menu.addEventListener('keydown', (e) => {
     const i = buttons.indexOf(document.activeElement);
     if (e.key === 'ArrowDown') { e.preventDefault(); buttons[(i + 1) % buttons.length].focus(); }

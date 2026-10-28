@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Notas por URL",
-  "version": "1.8.1",
+  "version": "1.8.2",
   "description": "Como los favoritos, pero para notas: adjunta notas con descripción, etiquetas y categorías de color a una página o a un sitio completo.",
   "permissions": ["storage", "tabs", "contextMenus", "alarms"],
   "action": {
